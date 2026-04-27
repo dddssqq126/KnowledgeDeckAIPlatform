@@ -37,6 +37,14 @@ body {
   background-color: hsl(var(--muted)) !important;
 }
 
+.dark [class*="text-white"] {
+  color: hsl(0 0% 95%) !important;
+}
+
+.dark [class*="hover:bg-white"]:hover {
+  background-color: hsl(0 0% 22%) !important;
+}
+
 .dark [class*="border-red-200"] {
   border-color: hsl(0 0% 30%) !important;
 }
