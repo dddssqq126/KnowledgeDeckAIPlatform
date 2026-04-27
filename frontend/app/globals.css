@@ -16,11 +16,11 @@ body {
 }
 
 .dark {
-  --background: 222 47% 11%;
-  --foreground: 210 20% 96%;
-  --border: 217 22% 26%;
-  --muted: 217 25% 18%;
-  --muted-foreground: 215 20% 70%;
+  --background: 0 0% 13%;
+  --foreground: 0 0% 93%;
+  --border: 0 0% 23%;
+  --muted: 0 0% 18%;
+  --muted-foreground: 0 0% 63%;
   color-scheme: dark;
 }
 

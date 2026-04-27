@@ -3,10 +3,9 @@
 import { Bot, Check, Copy, User } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
 import { ChatInput } from "../../../components/ChatInput";
+import { MarkdownWithCodeCopy } from "../../../components/MarkdownWithCodeCopy";
 import { useChatSessionsStore } from "../../../lib/chat-store";
 import {
   type ChatMessage,
@@ -235,9 +234,7 @@ function MessageBubble({
             </>
           ) : (
             <div className="markdown-body">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {message.content || (streaming ? "…" : "")}
-              </ReactMarkdown>
+              <MarkdownWithCodeCopy content={message.content || (streaming ? "…" : "")} />
               {streaming ? <span className="ml-1 animate-pulse">▍</span> : null}
             </div>
           )}
