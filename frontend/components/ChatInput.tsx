@@ -63,8 +63,8 @@ export function ChatInput({ knowledgeBases, disabled, onSend }: Props) {
         : `${selectedKbIds.length} KBs`;
 
   return (
-    <div className="border-t border-border bg-white p-3">
-      <div className="mx-auto max-w-5xl rounded-lg border border-border bg-white px-3 py-2">
+    <div className="border-t border-zinc-800 bg-zinc-950 p-3">
+      <div className="mx-auto max-w-5xl rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -76,12 +76,12 @@ export function ChatInput({ knowledgeBases, disabled, onSend }: Props) {
           }}
           placeholder="Ask anything (Enter to send, Shift+Enter for newline)…"
           rows={2}
-          className="w-full resize-none bg-transparent text-sm outline-none disabled:opacity-50"
+          className="w-full resize-none bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500 disabled:opacity-50"
           disabled={disabled}
         />
         <div className="mt-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-3">
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-400">
               <input
                 type="checkbox"
                 checked={useRag}
@@ -95,14 +95,14 @@ export function ChatInput({ knowledgeBases, disabled, onSend }: Props) {
                 type="button"
                 onClick={() => setPickerOpen((o) => !o)}
                 disabled={!useRag || knowledgeBases.length === 0}
-                className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-40"
+                className="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
               >
                 {kbLabel} ▾
               </button>
               {pickerOpen ? (
-                <div className="absolute bottom-full mb-1 w-56 max-h-64 overflow-auto rounded-md border border-border bg-white p-2 shadow-lg">
+                <div className="absolute bottom-full mb-1 w-56 max-h-64 overflow-auto rounded-md border border-zinc-700 bg-zinc-900 p-2 shadow-lg">
                   {knowledgeBases.length === 0 ? (
-                    <div className="px-2 py-1 text-xs text-muted-foreground">
+                    <div className="px-2 py-1 text-xs text-zinc-400">
                       No knowledge bases yet
                     </div>
                   ) : (
@@ -113,23 +113,23 @@ export function ChatInput({ knowledgeBases, disabled, onSend }: Props) {
                           onClick={() =>
                             setSelectedKbIds(knowledgeBases.map((k) => k.id))
                           }
-                          className="flex-1 rounded px-2 py-1 text-xs hover:bg-muted"
+                          className="flex-1 rounded px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-800"
                         >
                           Select all
                         </button>
                         <button
                           type="button"
                           onClick={() => setSelectedKbIds([])}
-                          className="flex-1 rounded px-2 py-1 text-xs hover:bg-muted"
+                          className="flex-1 rounded px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-800"
                         >
                           Clear
                         </button>
                       </div>
-                      <div className="my-1 border-t border-border" />
+                      <div className="my-1 border-t border-zinc-700" />
                       {knowledgeBases.map((kb) => (
                         <label
                           key={kb.id}
-                          className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-muted"
+                          className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-800"
                         >
                           <input
                             type="checkbox"
