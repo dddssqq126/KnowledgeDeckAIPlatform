@@ -36,7 +36,7 @@ export default function LoginPage() {
         user: { id: number; username: string };
       }>("/auth/login", { username, password });
       setSession(res.data.token, res.data.user);
-      router.push("/");
+      router.push("/chat");
     } catch (err) {
       if (isAxiosError(err) && err.response?.data?.detail) {
         const detail = err.response.data.detail as string;

@@ -16,10 +16,9 @@ import {
 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
 import { ChatInput } from "../../../../components/ChatInput";
+import { MarkdownWithCodeCopy } from "../../../../components/MarkdownWithCodeCopy";
 import { useKbStore } from "../../../../lib/kb-store";
 import { useLlmInfo } from "../../../../lib/llm-info";
 import { useSlideStore } from "../../../../lib/slide-store";
@@ -549,9 +548,7 @@ function SlideBubble({
             </>
           ) : (
             <div className="markdown-body">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {display || (streaming ? "…" : "")}
-              </ReactMarkdown>
+              <MarkdownWithCodeCopy content={display || (streaming ? "…" : "")} />
               {streaming ? <span className="ml-1 animate-pulse">▍</span> : null}
             </div>
           )}

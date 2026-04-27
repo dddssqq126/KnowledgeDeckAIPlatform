@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
-import { create } from "zustand";
 
 import { api } from "./api";
+import { mockApi } from "./mock-data";
+import { USE_MOCK_DATA } from "./mock-mode";
+import { createStore, useStoreSelector } from "./simple-store";
 
 export type LlmInfo = { label: string; model_id: string };
 
@@ -13,24 +15,33 @@ type LlmInfoState = {
   refresh: () => Promise<void>;
 };
 
-export const useLlmInfoStore = create<LlmInfoState>((set) => ({
+const store = createStore<LlmInfoState>({
   info: null,
   loaded: false,
   async refresh() {
     try {
+      if (USE_MOCK_DATA) {
+        const info = await mockApi.getLlmInfo();
+        store.setState((prev) => ({ ...prev, info, loaded: true }));
+        return;
+      }
       const res = await api.get<LlmInfo>("/llm/info");
-      set({ info: res.data, loaded: true });
+      store.setState((prev) => ({ ...prev, info: res.data, loaded: true }));
     } catch {
-      // Auth-gated endpoint; on 401 the api layer redirects to /login.
-      // Any other failure leaves the label hidden — the rest of the page
-      // works fine without it.
-      set({ loaded: true });
+      store.setState((prev) => ({ ...prev, loaded: true }));
     }
   },
-}));
+});
 
-/** Hydrates the store on first call. Safe to call from multiple components —
- * subsequent calls no-op once `loaded` is true. */
+type LlmInfoHook = {
+  <S>(selector: (state: LlmInfoState) => S): S;
+  getState: () => LlmInfoState;
+};
+
+export const useLlmInfoStore = ((selector) => useStoreSelector(store, selector)) as LlmInfoHook;
+
+useLlmInfoStore.getState = store.getState;
+
 export function useLlmInfo(): LlmInfo | null {
   const info = useLlmInfoStore((s) => s.info);
   const loaded = useLlmInfoStore((s) => s.loaded);

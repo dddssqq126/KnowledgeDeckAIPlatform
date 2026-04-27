@@ -1,11 +1,12 @@
 "use client";
 
-import { LayoutDashboard, LogOut, MessageSquare, Presentation, Search } from "lucide-react";
+import { CircleHelp, LayoutDashboard, LogOut, MessageSquare, Presentation, Search } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
 
 import { SidebarItemList } from "./SidebarItemList";
+import { ThemeToggle } from "./ThemeToggle";
 import { useAuthStore } from "../lib/auth-store";
 import { useChatSessionsStore } from "../lib/chat-store";
 import { useKbStore } from "../lib/kb-store";
@@ -25,8 +26,9 @@ export function AppSidebar() {
   const clearSession = useAuthStore((s) => s.clearSession);
 
   const onDashboard = pathname === "/dashboard";
-  const onChat = pathname === "/";
+  const onChat = pathname.startsWith("/chat");
   const onKb = pathname.startsWith("/knowledge-bases");
+  const onAsk = pathname.startsWith("/ask");
   const onSlides = pathname.startsWith("/slides");
 
   function handleLogout() {
@@ -46,8 +48,11 @@ export function AppSidebar() {
         <NavLink href="/knowledge-bases" active={onKb} icon={Search}>
           Knowledge Bases
         </NavLink>
-        <NavLink href="/" active={onChat} icon={MessageSquare}>
+        <NavLink href="/chat" active={onChat} icon={MessageSquare}>
           Chat
+        </NavLink>
+        <NavLink href="/ask" active={onAsk} icon={CircleHelp}>
+          RAG Summary
         </NavLink>
         <NavLink href="/slides" active={onSlides} icon={Presentation}>
           Slide Maker
@@ -66,6 +71,7 @@ export function AppSidebar() {
         <div className="mb-2 truncate" title={user?.username}>
           {user?.username ?? ""}
         </div>
+        <ThemeToggle />
         <button
           type="button"
           onClick={handleLogout}
@@ -105,7 +111,7 @@ function NavLink({
   );
 }
 
-// --- Lower-list bindings: each variant subscribes to its own Zustand store ---
+// --- Lower-list bindings: each variant subscribes to its own store ---
 
 function ChatList({ activeSidParam }: { activeSidParam: string | null }) {
   const router = useRouter();
@@ -127,14 +133,14 @@ function ChatList({ activeSidParam }: { activeSidParam: string | null }) {
       items={sessions}
       loaded={loaded}
       activeId={activeId}
-      onSelect={(id) => router.push(`/?sid=${id}`)}
+      onSelect={(id) => router.push(`/chat?sid=${id}`)}
       onCreate={async () => {
         const s = await newChat();
-        router.push(`/?sid=${s.id}`);
+        router.push(`/chat?sid=${s.id}`);
       }}
       onDelete={async (id) => {
         await remove(id);
-        if (id === activeId) router.push("/");
+        if (id === activeId) router.push("/chat");
       }}
       onRename={async (id, title) => {
         await rename(id, title);
