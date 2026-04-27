@@ -36,8 +36,8 @@ export function AppSidebar() {
   }
 
   return (
-    <aside className="hidden w-64 flex-col border-r border-border bg-white/80 md:flex">
-      <div className="border-b border-border px-4 py-4 text-lg font-semibold">
+    <aside className="hidden w-64 flex-col border-r border-zinc-800 bg-zinc-950 text-zinc-100 md:flex">
+      <div className="border-b border-zinc-800 px-4 py-4 text-lg font-semibold">
         KnowledgeDeck
       </div>
       <nav className="space-y-1 px-2 py-3 text-sm">
@@ -68,14 +68,14 @@ export function AppSidebar() {
         <SlideList activeIdParam={routeParams?.id ?? null} />
       ) : null /* Dashboard: no lower list per Q1=A. */}
 
-      <div className="border-t border-border px-3 py-3 text-xs text-muted-foreground">
+      <div className="border-t border-zinc-800 px-3 py-3 text-xs text-zinc-400">
         <div className="mb-2 truncate" title={user?.username}>
           {user?.username ?? ""}
         </div>
         <button
           type="button"
           onClick={handleLogout}
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1 hover:bg-muted hover:text-foreground"
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1 hover:bg-zinc-800 hover:text-zinc-100"
         >
           <LogOut className="h-4 w-4" />
           Logout
@@ -101,8 +101,8 @@ function NavLink({
       href={href}
       className={`flex items-center gap-2 rounded-md px-3 py-2 ${
         active
-          ? "bg-muted text-foreground"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+          ? "bg-zinc-800 text-zinc-100"
+          : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
       }`}
     >
       <Icon className="h-4 w-4" />

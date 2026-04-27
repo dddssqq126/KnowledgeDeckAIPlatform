@@ -150,10 +150,10 @@ export function ChatWorkspace({
   );
 
   return (
-    <section className="flex h-full flex-col">
-      <header className="flex h-14 items-center justify-between border-b border-border bg-white/80 px-4">
+    <section className="flex h-full flex-col bg-zinc-950 text-zinc-100">
+      <header className="flex h-14 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4">
         <div className="text-sm font-medium">{activeSessionTitle}</div>
-        <div className="text-xs text-muted-foreground">
+        <div className="text-xs text-zinc-400">
           Model: {llmInfo?.label ?? "…"}
         </div>
       </header>
@@ -161,7 +161,7 @@ export function ChatWorkspace({
       <div className="flex-1 overflow-auto px-4 py-6">
         <div className="mx-auto max-w-5xl space-y-4">
           {messages.length === 0 && !isStreaming ? (
-            <div className="rounded-lg border border-dashed border-border bg-white p-10 text-center text-sm text-muted-foreground">
+            <div className="rounded-lg border border-dashed border-zinc-700 bg-zinc-900 p-10 text-center text-sm text-zinc-400">
               Type a message below to start. Toggle "Use RAG" to ground the
               answer in your knowledge bases.
             </div>
@@ -182,7 +182,7 @@ export function ChatWorkspace({
             />
           ) : null}
           {streamError ? (
-            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            <div className="rounded-md border border-red-500/60 bg-red-950/40 px-3 py-2 text-xs text-red-300">
               Stream error: {streamError}
             </div>
           ) : null}
@@ -223,8 +223,8 @@ function MessageBubble({
         <div
           className={`rounded-lg px-3 py-2 text-sm ${
             isUser
-              ? "whitespace-pre-wrap bg-foreground text-white"
-              : "border border-border bg-white text-foreground"
+              ? "whitespace-pre-wrap bg-zinc-700 text-zinc-100"
+              : "border border-zinc-700 bg-zinc-900 text-zinc-100"
           }`}
         >
           {isUser ? (
@@ -241,7 +241,7 @@ function MessageBubble({
             </div>
           )}
           {message.citations && message.citations.length > 0 ? (
-            <div className="mt-2 border-t border-border/40 pt-2 text-xs text-muted-foreground">
+            <div className="mt-2 border-t border-zinc-700 pt-2 text-xs text-zinc-400">
               Sources:{" "}
               {message.citations.map((c, i) => (
                 <span key={c.file_id}>
@@ -252,7 +252,7 @@ function MessageBubble({
             </div>
           ) : null}
         </div>
-        <div className="flex items-center gap-2 px-1 text-[10px] text-muted-foreground">
+        <div className="flex items-center gap-2 px-1 text-[10px] text-zinc-500">
           <span>{ts}</span>
           {!isUser && !streaming && message.content ? (
             <CopyButton text={message.content} />
@@ -293,7 +293,7 @@ function CopyButton({ text }: { text: string }) {
       type="button"
       onClick={handleCopy}
       aria-label="Copy markdown"
-      className="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-muted hover:text-foreground"
+      className="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-zinc-800 hover:text-zinc-100"
     >
       {copied ? (
         <>
@@ -311,14 +311,14 @@ function CopyButton({ text }: { text: string }) {
 function Avatar({ isUser }: { isUser: boolean }) {
   return isUser ? (
     <div
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-foreground text-white"
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-zinc-100"
       aria-label="User"
     >
       <User className="h-4 w-4" />
     </div>
   ) : (
     <div
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-white text-foreground"
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900 text-zinc-100"
       aria-label="Assistant"
     >
       <Bot className="h-4 w-4" />
