@@ -6,6 +6,7 @@ import { useParams, usePathname, useRouter, useSearchParams } from "next/navigat
 import { useEffect } from "react";
 
 import { SidebarItemList } from "./SidebarItemList";
+import { ThemeToggle } from "./ThemeToggle";
 import { useAuthStore } from "../lib/auth-store";
 import { useChatSessionsStore } from "../lib/chat-store";
 import { useKbStore } from "../lib/kb-store";
@@ -70,6 +71,7 @@ export function AppSidebar() {
         <div className="mb-2 truncate" title={user?.username}>
           {user?.username ?? ""}
         </div>
+        <ThemeToggle />
         <button
           type="button"
           onClick={handleLogout}
@@ -109,7 +111,7 @@ function NavLink({
   );
 }
 
-// --- Lower-list bindings: each variant subscribes to its own Zustand store ---
+// --- Lower-list bindings: each variant subscribes to its own store ---
 
 function ChatList({ activeSidParam }: { activeSidParam: string | null }) {
   const router = useRouter();

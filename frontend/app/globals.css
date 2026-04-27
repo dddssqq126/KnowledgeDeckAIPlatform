@@ -15,6 +15,24 @@ body {
   color: hsl(var(--foreground));
 }
 
+.dark {
+  --background: 222 47% 11%;
+  --foreground: 210 20% 96%;
+  --border: 217 22% 26%;
+  --muted: 217 25% 18%;
+  --muted-foreground: 215 20% 70%;
+  color-scheme: dark;
+}
+
+.dark .bg-white {
+  background-color: hsl(var(--background));
+}
+
+.dark .bg-white\/80 {
+  background-color: hsl(var(--background) / 0.8);
+}
+
+
 /* Minimal markdown styling for assistant message bubbles. Tailored to small
    inline rendering — no @tailwindcss/typography needed. */
 .markdown-body > :first-child { margin-top: 0; }
