@@ -20,9 +20,6 @@ describe("AuthGuard", () => {
     useAuthStore.getState().clearSession();
     localStorage.clear();
     replaceMock.mockClear();
-    // Ensure Zustand persist hydration is complete before render so the guard
-    // proceeds past its hydration gate during tests.
-    await useAuthStore.persist.rehydrate();
   });
 
   afterEach(() => mock.restore());

@@ -25,7 +25,7 @@ export function AppSidebar() {
   const clearSession = useAuthStore((s) => s.clearSession);
 
   const onDashboard = pathname === "/dashboard";
-  const onChat = pathname === "/";
+  const onChat = pathname.startsWith("/chat");
   const onKb = pathname.startsWith("/knowledge-bases");
   const onSlides = pathname.startsWith("/slides");
 
@@ -46,7 +46,7 @@ export function AppSidebar() {
         <NavLink href="/knowledge-bases" active={onKb} icon={Search}>
           Knowledge Bases
         </NavLink>
-        <NavLink href="/" active={onChat} icon={MessageSquare}>
+        <NavLink href="/chat" active={onChat} icon={MessageSquare}>
           Chat
         </NavLink>
         <NavLink href="/slides" active={onSlides} icon={Presentation}>
@@ -127,14 +127,14 @@ function ChatList({ activeSidParam }: { activeSidParam: string | null }) {
       items={sessions}
       loaded={loaded}
       activeId={activeId}
-      onSelect={(id) => router.push(`/?sid=${id}`)}
+      onSelect={(id) => router.push(`/chat?sid=${id}`)}
       onCreate={async () => {
         const s = await newChat();
-        router.push(`/?sid=${s.id}`);
+        router.push(`/chat?sid=${s.id}`);
       }}
       onDelete={async (id) => {
         await remove(id);
-        if (id === activeId) router.push("/");
+        if (id === activeId) router.push("/chat");
       }}
       onRename={async (id, title) => {
         await rename(id, title);

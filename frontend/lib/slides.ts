@@ -2,6 +2,8 @@
 
 import { api } from "./api";
 import { useAuthStore } from "./auth-store";
+import { mockApi } from "./mock-data";
+import { USE_MOCK_DATA } from "./mock-mode";
 
 export type SlideStatus = "outlining" | "rendering" | "rendered" | "failed";
 
@@ -37,6 +39,7 @@ const OUTLINE_READY_RE = /\[OUTLINE_READY(?:\s+[^\]]+)?\]/;
 // --- Sessions CRUD ---
 
 export async function createSlideSession(title?: string): Promise<SlideSession> {
+  if (USE_MOCK_DATA) return mockApi.createSlideSession(title);
   const res = await api.post<SlideSession>("/slide-sessions", {
     title: title ?? null,
   });
@@ -44,11 +47,13 @@ export async function createSlideSession(title?: string): Promise<SlideSession> 
 }
 
 export async function listSlideSessions(): Promise<SlideSession[]> {
+  if (USE_MOCK_DATA) return mockApi.listSlideSessions();
   const res = await api.get<SlideSession[]>("/slide-sessions");
   return res.data;
 }
 
 export async function getSlideSession(id: number): Promise<SlideSessionDetail> {
+  if (USE_MOCK_DATA) return mockApi.getSlideSession(id);
   const res = await api.get<SlideSessionDetail>(`/slide-sessions/${id}`);
   return res.data;
 }
@@ -57,11 +62,13 @@ export async function updateSlideSession(
   id: number,
   title: string,
 ): Promise<SlideSession> {
+  if (USE_MOCK_DATA) return mockApi.updateSlideSession(id, title);
   const res = await api.patch<SlideSession>(`/slide-sessions/${id}`, { title });
   return res.data;
 }
 
 export async function deleteSlideSession(id: number): Promise<void> {
+  if (USE_MOCK_DATA) return mockApi.deleteSlideSession(id);
   await api.delete(`/slide-sessions/${id}`);
 }
 
@@ -87,6 +94,10 @@ export async function streamSlideSession(
   handlers: SlideStreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
+  if (USE_MOCK_DATA) {
+    await mockApi.streamSlideSession(sessionId, req, handlers);
+    return;
+  }
   const token = useAuthStore.getState().token;
   const baseURL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
   let res: Response;
@@ -152,6 +163,7 @@ export async function renderSlideSession(
   sessionId: number,
   opts?: { template?: string; language?: string },
 ): Promise<RenderResponse> {
+  if (USE_MOCK_DATA) return mockApi.renderSlideSession(sessionId);
   const res = await api.post<RenderResponse>(
     `/slide-sessions/${sessionId}/render`,
     {
@@ -199,6 +211,7 @@ export async function downloadSlideSession(
   sessionId: number,
   fallbackTitle: string,
 ): Promise<void> {
+  if (USE_MOCK_DATA) return mockApi.downloadSlideSession(sessionId, fallbackTitle);
   const token = useAuthStore.getState().token;
   const baseURL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
   const res = await fetch(`${baseURL}/slide-sessions/${sessionId}/download`, {

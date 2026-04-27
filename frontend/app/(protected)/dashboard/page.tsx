@@ -67,7 +67,7 @@ export default function DashboardPage() {
             icon={MessageSquare}
             label="Chats"
             value={allLoaded ? sessions.length : "—"}
-            href="/"
+            href="/chat"
           />
           <StatCard
             icon={Presentation}
@@ -87,7 +87,7 @@ export default function DashboardPage() {
             }
           />
           <ModuleCard
-            href="/"
+            href="/chat"
             icon={MessageSquare}
             title="Chat"
             body={
