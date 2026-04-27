@@ -138,3 +138,55 @@ export async function streamChat(
     }
   }
 }
+
+export type AskOnceInput = {
+  message: string;
+  useRag: boolean;
+  kbIds: number[] | null;
+  onToken?: (text: string) => void;
+};
+
+export type AskOnceResult = {
+  answer: string;
+  citations: Citation[];
+};
+
+/**
+ * One-shot Q&A for summary style usage: creates a temporary chat session,
+ * streams exactly one answer, then deletes the temporary session.
+ */
+export async function askOnce(input: AskOnceInput): Promise<AskOnceResult> {
+  const session = await createSession("One-shot Summary");
+  let answer = "";
+  let citations: Citation[] = [];
+  try {
+    await new Promise<void>((resolve, reject) => {
+      void streamChat(
+        {
+          session_id: session.id,
+          message: input.message,
+          use_rag: input.useRag,
+          kb_ids: input.kbIds,
+        },
+        {
+          onToken: (text) => {
+            answer += text;
+            input.onToken?.(text);
+          },
+          onCitations: (items) => {
+            citations = items;
+          },
+          onDone: () => resolve(),
+          onError: (msg) => reject(new Error(msg)),
+        },
+      );
+    });
+    return { answer, citations };
+  } finally {
+    try {
+      await deleteSession(session.id);
+    } catch {
+      // Cleanup is best-effort for one-shot mode.
+    }
+  }
+}

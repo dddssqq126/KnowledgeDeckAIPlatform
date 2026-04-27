@@ -4,6 +4,7 @@ import {
   FileText,
   Library,
   MessageSquare,
+  CircleHelp,
   Presentation,
 } from "lucide-react";
 import Link from "next/link";
@@ -77,7 +78,7 @@ export default function DashboardPage() {
           />
         </div>
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
           <ModuleCard
             href="/knowledge-bases"
             icon={Library}
@@ -92,6 +93,14 @@ export default function DashboardPage() {
             title="Chat"
             body={
               "Streaming conversation with Gemma 4. Toggle Use RAG to ground answers in selected knowledge bases; the assistant cites the files it pulled from."
+            }
+          />
+          <ModuleCard
+            href="/ask"
+            icon={CircleHelp}
+            title="RAG Summary"
+            body={
+              "Single-turn Q&A mode for concise summaries. Ask one question with optional RAG sources, get one grounded answer, and finish without a persistent chat thread."
             }
           />
           <ModuleCard

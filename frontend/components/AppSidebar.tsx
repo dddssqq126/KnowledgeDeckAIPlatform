@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, LogOut, MessageSquare, Presentation, Search } from "lucide-react";
+import { CircleHelp, LayoutDashboard, LogOut, MessageSquare, Presentation, Search } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
@@ -27,6 +27,7 @@ export function AppSidebar() {
   const onDashboard = pathname === "/dashboard";
   const onChat = pathname.startsWith("/chat");
   const onKb = pathname.startsWith("/knowledge-bases");
+  const onAsk = pathname.startsWith("/ask");
   const onSlides = pathname.startsWith("/slides");
 
   function handleLogout() {
@@ -48,6 +49,9 @@ export function AppSidebar() {
         </NavLink>
         <NavLink href="/chat" active={onChat} icon={MessageSquare}>
           Chat
+        </NavLink>
+        <NavLink href="/ask" active={onAsk} icon={CircleHelp}>
+          RAG Summary
         </NavLink>
         <NavLink href="/slides" active={onSlides} icon={Presentation}>
           Slide Maker
