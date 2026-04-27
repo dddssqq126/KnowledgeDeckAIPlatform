@@ -26,6 +26,7 @@ export function AppSidebar() {
 
   const onDashboard = pathname === "/dashboard";
   const onChat = pathname === "/";
+  const onPresentonChat = pathname.startsWith("/presenton");
   const onKb = pathname.startsWith("/knowledge-bases");
   const onSlides = pathname.startsWith("/slides");
 
@@ -49,13 +50,18 @@ export function AppSidebar() {
         <NavLink href="/" active={onChat} icon={MessageSquare}>
           Chat
         </NavLink>
+        <NavLink href="/presenton/chat" active={onPresentonChat} icon={MessageSquare}>
+          Presenton Chat
+        </NavLink>
         <NavLink href="/slides" active={onSlides} icon={Presentation}>
           Slide Maker
         </NavLink>
       </nav>
 
       {onChat ? (
-        <ChatList activeSidParam={params.get("sid")} />
+        <ChatList activeSidParam={params.get("sid")} basePath="/" />
+      ) : onPresentonChat ? (
+        <ChatList activeSidParam={params.get("sid")} basePath="/presenton/chat" />
       ) : onKb ? (
         <KbList activeIdParam={routeParams?.id ?? null} />
       ) : onSlides ? (
@@ -107,7 +113,13 @@ function NavLink({
 
 // --- Lower-list bindings: each variant subscribes to its own Zustand store ---
 
-function ChatList({ activeSidParam }: { activeSidParam: string | null }) {
+function ChatList({
+  activeSidParam,
+  basePath,
+}: {
+  activeSidParam: string | null;
+  basePath: string;
+}) {
   const router = useRouter();
   const sessions = useChatSessionsStore((s) => s.sessions);
   const loaded = useChatSessionsStore((s) => s.loaded);
@@ -127,14 +139,14 @@ function ChatList({ activeSidParam }: { activeSidParam: string | null }) {
       items={sessions}
       loaded={loaded}
       activeId={activeId}
-      onSelect={(id) => router.push(`/?sid=${id}`)}
+      onSelect={(id) => router.push(`${basePath}?sid=${id}`)}
       onCreate={async () => {
         const s = await newChat();
-        router.push(`/?sid=${s.id}`);
+        router.push(`${basePath}?sid=${s.id}`);
       }}
       onDelete={async (id) => {
         await remove(id);
-        if (id === activeId) router.push("/");
+        if (id === activeId) router.push(basePath);
       }}
       onRename={async (id, title) => {
         await rename(id, title);
