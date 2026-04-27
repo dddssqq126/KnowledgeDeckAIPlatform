@@ -16,22 +16,44 @@ body {
 }
 
 .dark {
-  --background: 0 0% 13%;
-  --foreground: 0 0% 93%;
-  --border: 0 0% 23%;
-  --muted: 0 0% 18%;
-  --muted-foreground: 0 0% 63%;
+  --background: 0 0% 10%;
+  --foreground: 0 0% 95%;
+  --border: 0 0% 26%;
+  --muted: 0 0% 16%;
+  --muted-foreground: 0 0% 72%;
   color-scheme: dark;
 }
 
-.dark .bg-white {
-  background-color: hsl(var(--background));
+/* ChatGPT-like dark theme: everything stays in black/gray scale. */
+.dark .bg-foreground {
+  background-color: hsl(0 0% 24%) !important;
 }
 
-.dark .bg-white\/80 {
-  background-color: hsl(var(--background) / 0.8);
+.dark .text-foreground {
+  color: hsl(0 0% 95%) !important;
 }
 
+.dark [class*="bg-white"] {
+  background-color: hsl(var(--muted)) !important;
+}
+
+.dark [class*="border-red-200"] {
+  border-color: hsl(0 0% 30%) !important;
+}
+
+.dark [class*="bg-red-50"],
+.dark .hover\:bg-red-50:hover {
+  background-color: hsl(0 0% 18%) !important;
+}
+
+.dark [class*="text-red-700"],
+.dark [class*="text-red-600"] {
+  color: hsl(0 0% 80%) !important;
+}
+
+.dark .markdown-body a {
+  color: hsl(210 100% 78%) !important;
+}
 
 /* Minimal markdown styling for assistant message bubbles. Tailored to small
    inline rendering — no @tailwindcss/typography needed. */
