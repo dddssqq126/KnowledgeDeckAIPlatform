@@ -481,6 +481,12 @@ Backend quick smoke check (no pytest, plain Python):
 python backend/scripts/smoke_check.py --base-url http://localhost:8080
 ```
 
+Backend function check (run a specific function directly, no pytest):
+
+```bash
+python backend/scripts/run_function.py app.shared.api.health.health
+python backend/scripts/run_function.py app.shared.api.health.health --expect '{"status":"ok","service":"knowledgedeck_backend"}'
+```
 Frontend (vitest + tsc):
 
 ```bash
