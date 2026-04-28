@@ -102,7 +102,7 @@ backend/
 │   │   │       ├── document_parser.py # txt/cs/md/pdf/docx/pptx parsers
 │   │   │       ├── text_splitter.py   # LangChain RecursiveCharacterTextSplitter
 │   │   │       ├── qdrant_store.py    # named-vector schema + hybrid_search
-│   │   │       ├── sparse_embed.py    # fastembed BM25 wrapper
+│   │   │       ├── sparse_embed.py    # BM25-style hashing sparse wrapper
 │   │   │       └── model_clients.py   # EmbeddingClient + RerankClient
 │   │   ├── knowledge_bases/       # 🗂️ KB management
 │   │   │   ├── api/
@@ -213,7 +213,7 @@ User uploads file.docx via POST /knowledge-bases/{kb_id}/files
    │                  ▼                                   │
    │ Two parallel embeds:                                 │
    │   bge-m3 dense (1024-d cosine)                       │
-   │   fastembed BM25 sparse (in-process, no GPU)         │
+   │   BM25-style sparse + Qdrant IDF (in-process)        │
    │                  ▼                                   │
    │ qdrant_store.upsert_chunks                           │
    │   point.vector = {dense: [...], sparse: SparseVector}│
@@ -268,7 +268,7 @@ async def retrieve_context(*, user_id: int, kb_ids: list[int] | None, query: str
 Step 1. Embed query in parallel
         ┌────────────────────────────┐
         │ bge-m3 dense (1024-d)      │ via vLLM /embeddings
-        │ fastembed BM25 sparse      │ in-process
+        │ BM25-style sparse + IDF    │ in-process
         └────────────────────────────┘
 
 Step 2. Qdrant Query API hybrid search

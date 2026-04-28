@@ -119,7 +119,7 @@ your question  ─┤  rewriter (chat-only, every turn)     │
               ▼                                          ▼
    ┌──────────────────────┐                ┌──────────────────────┐
    │ embed dense          │                │ embed sparse (BM25)  │
-   │ bge-m3 (1024-d)      │                │ Qdrant/bm25          │
+   │ bge-m3 (1024-d)      │                │ BM25-style sparse    │
    │ via vLLM /embeddings │                │ in-process           │
    └──────────┬───────────┘                └──────────┬───────────┘
               │                                       │
@@ -223,7 +223,7 @@ For the full pipeline implementation see [docs/ARCHITECTURE.md § RAG](docs/ARCH
 | Backend | FastAPI, SQLAlchemy 2.0 async, Pydantic, Alembic |
 | LLM | vLLM (OpenAI-compatible) — default Google Gemma 4 E4B |
 | Embedding | vLLM serving BAAI/bge-m3 (1024-d dense) |
-| Sparse | fastembed `Qdrant/bm25` (in-process) |
+| Sparse | dependency-light BM25-style hashing + Qdrant IDF (in-process) |
 | Reranker | vLLM `--runner pooling --convert classify` serving BAAI/bge-reranker-v2-m3 |
 | Vectors | Qdrant 1.12+ with named vectors + RRF fusion |
 | Object store | MinIO (S3-compatible) |
