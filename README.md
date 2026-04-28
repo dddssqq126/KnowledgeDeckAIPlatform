@@ -475,6 +475,12 @@ cd backend
 python -m pytest -v
 ```
 
+Backend quick smoke check (no pytest, plain Python):
+
+```bash
+python backend/scripts/smoke_check.py --base-url http://localhost:8080
+```
+
 Frontend (vitest + tsc):
 
 ```bash
