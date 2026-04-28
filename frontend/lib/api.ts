@@ -1,6 +1,6 @@
 "use client";
 
-import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
+import axios, { type AxiosError } from "axios";
 
 import { useAuthStore } from "./auth-store";
 
@@ -9,19 +9,9 @@ export const api = axios.create({
   timeout: 30_000,
 });
 
-api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  const token = useAuthStore.getState().token;
-  if (token) {
-    config.headers.set("Authorization", `Bearer ${token}`);
-  }
-  return config;
-});
-
 api.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
-    // 401 on the login endpoint itself is "wrong credentials" — the form
-    // owns the error display, so skip the global session-clear + redirect.
     const requestUrl = error.config?.url ?? "";
     const isLoginRequest = requestUrl.endsWith("/auth/login");
     if (error.response?.status === 401 && !isLoginRequest) {

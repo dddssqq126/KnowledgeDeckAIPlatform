@@ -5,28 +5,26 @@ import { createStore, useStoreSelector } from "./simple-store";
 export type AuthUser = { id: number; username: string };
 
 export type AuthState = {
-  token: string | null;
   user: AuthUser | null;
-  setSession: (token: string, user: AuthUser) => void;
+  setSession: (user: AuthUser) => void;
   clearSession: () => void;
 };
 
-type AuthPersistState = { token: string | null; user: AuthUser | null };
+type AuthPersistState = { user: AuthUser | null };
 
 const STORAGE_KEY = "knowledgedeck-auth";
 
 function loadPersisted(): AuthPersistState {
-  if (typeof window === "undefined") return { token: null, user: null };
+  if (typeof window === "undefined") return { user: null };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { token: null, user: null };
+    if (!raw) return { user: null };
     const parsed = JSON.parse(raw) as { state?: AuthPersistState };
     return {
-      token: parsed.state?.token ?? null,
       user: parsed.state?.user ?? null,
     };
   } catch {
-    return { token: null, user: null };
+    return { user: null };
   }
 }
 
@@ -38,19 +36,18 @@ function persistState(state: AuthPersistState) {
 const persisted = loadPersisted();
 
 const authStore = createStore<AuthState>({
-  token: persisted.token,
   user: persisted.user,
-  setSession: (token, user) => {
+  setSession: (user) => {
     authStore.setState((prev) => {
-      const next = { ...prev, token, user };
-      persistState({ token, user });
+      const next = { ...prev, user };
+      persistState({ user });
       return next;
     });
   },
   clearSession: () => {
     authStore.setState((prev) => {
-      const next = { ...prev, token: null, user: null };
-      persistState({ token: null, user: null });
+      const next = { ...prev, user: null };
+      persistState({ user: null });
       return next;
     });
   },

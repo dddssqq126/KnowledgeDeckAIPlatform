@@ -11,12 +11,23 @@ const ERROR_KEYS: Record<string, string> = {
   invalid_credentials: "auth.error.invalid_credentials",
 };
 
-// Hardcoded English fallbacks shown to users until the i18n layer lands.
-// `data-error-key` carries the stable code for tests and future i18n lookup.
 const ERROR_FALLBACKS: Record<string, string> = {
   "auth.error.invalid_credentials": "Incorrect username or password.",
   "auth.error.network": "Could not reach the server. Please try again.",
 };
+
+type LoginResponse = {
+  user?: { id?: number; username?: string };
+  username?: string;
+  message?: string;
+};
+
+function extractUsername(data: LoginResponse): string {
+  if (typeof data.user?.username === "string") return data.user.username;
+  if (typeof data.username === "string") return data.username;
+  if (typeof data.message === "string") return data.message;
+  return "";
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -31,11 +42,17 @@ export default function LoginPage() {
     setErrorKey(null);
     setSubmitting(true);
     try {
-      const res = await api.post<{
-        token: string;
-        user: { id: number; username: string };
-      }>("/auth/login", { username, password });
-      setSession(res.data.token, res.data.user);
+      const res = await api.post<LoginResponse>("/auth/login", { username, password });
+      const returnedName = extractUsername(res.data).trim();
+      if (!returnedName || returnedName !== username.trim()) {
+        setErrorKey("auth.error.invalid_credentials");
+        return;
+      }
+
+      setSession({
+        id: res.data.user?.id ?? 0,
+        username: returnedName,
+      });
       router.push("/chat");
     } catch (err) {
       if (isAxiosError(err) && err.response?.data?.detail) {

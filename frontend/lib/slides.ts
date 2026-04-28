@@ -1,7 +1,6 @@
 "use client";
 
 import { api } from "./api";
-import { useAuthStore } from "./auth-store";
 import { mockApi } from "./mock-data";
 import { USE_MOCK_DATA } from "./mock-mode";
 
@@ -98,7 +97,6 @@ export async function streamSlideSession(
     await mockApi.streamSlideSession(sessionId, req, handlers);
     return;
   }
-  const token = useAuthStore.getState().token;
   const baseURL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
   let res: Response;
   try {
@@ -106,7 +104,6 @@ export async function streamSlideSession(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(req),
       signal,
@@ -212,11 +209,8 @@ export async function downloadSlideSession(
   fallbackTitle: string,
 ): Promise<void> {
   if (USE_MOCK_DATA) return mockApi.downloadSlideSession(sessionId, fallbackTitle);
-  const token = useAuthStore.getState().token;
   const baseURL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
-  const res = await fetch(`${baseURL}/slide-sessions/${sessionId}/download`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  const res = await fetch(`${baseURL}/slide-sessions/${sessionId}/download`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const blob = await res.blob();
   const disp = res.headers.get("Content-Disposition") ?? "";

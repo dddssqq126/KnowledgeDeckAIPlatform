@@ -1,7 +1,6 @@
 "use client";
 
 import { api } from "./api";
-import { useAuthStore } from "./auth-store";
 import { mockApi } from "./mock-data";
 import { USE_MOCK_DATA } from "./mock-mode";
 
@@ -68,8 +67,7 @@ export type StreamHandlers = {
 };
 
 /**
- * Streams a chat reply via SSE using fetch + ReadableStream so we can attach
- * the Bearer token (EventSource cannot set headers).
+ * Streams a chat reply via SSE using fetch + ReadableStream.
  */
 export async function streamChat(
   req: StreamRequest,
@@ -80,7 +78,6 @@ export async function streamChat(
     await mockApi.streamChat(req, handlers);
     return;
   }
-  const token = useAuthStore.getState().token;
   const baseURL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
   let res: Response;
   try {
@@ -88,7 +85,6 @@ export async function streamChat(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(req),
       signal,

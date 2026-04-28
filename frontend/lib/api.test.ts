@@ -18,50 +18,32 @@ describe("api axios instance", () => {
     vi.unstubAllGlobals();
   });
 
-  it("attaches Bearer header when a token is set", async () => {
-    useAuthStore.getState().setSession("u_7", { id: 7, username: "alice" });
-    mock.onGet("/echo").reply((config) => [200, { auth: config.headers?.Authorization ?? null }]);
-    const res = await api.get("/echo");
-    expect(res.data).toEqual({ auth: "Bearer u_7" });
-  });
-
-  it("omits Authorization header when no token is set", async () => {
+  it("does not attach Authorization header", async () => {
+    useAuthStore.getState().setSession({ id: 7, username: "alice" });
     mock.onGet("/echo").reply((config) => [200, { auth: config.headers?.Authorization ?? null }]);
     const res = await api.get("/echo");
     expect(res.data).toEqual({ auth: null });
   });
 
   it("clears session and redirects on 401", async () => {
-    useAuthStore.getState().setSession("u_7", { id: 7, username: "alice" });
-    mock.onGet("/protected").reply(401, { detail: "invalid_token" });
+    useAuthStore.getState().setSession({ id: 7, username: "alice" });
+    mock.onGet("/protected").reply(401, { detail: "invalid_user" });
     const replaceMock = vi.fn();
     vi.stubGlobal("location", { ...window.location, pathname: "/dashboard", replace: replaceMock });
 
     await expect(api.get("/protected")).rejects.toThrow();
-    expect(useAuthStore.getState().token).toBeNull();
+    expect(useAuthStore.getState().user).toBeNull();
     expect(replaceMock).toHaveBeenCalledWith("/login");
   });
 
-  it("does not redirect when already on /login", async () => {
-    useAuthStore.getState().setSession("u_7", { id: 7, username: "alice" });
-    mock.onPost("/auth/login").reply(401, { detail: "invalid_credentials" });
-    const replaceMock = vi.fn();
-    vi.stubGlobal("location", { ...window.location, pathname: "/login", replace: replaceMock });
-
-    await expect(api.post("/auth/login", {})).rejects.toThrow();
-    expect(replaceMock).not.toHaveBeenCalled();
-  });
-
   it("does not clear session when login itself returns 401", async () => {
-    // A logged-in user submitting wrong creds on /login should keep their
-    // session — the form owns the error display.
-    useAuthStore.getState().setSession("u_7", { id: 7, username: "alice" });
+    useAuthStore.getState().setSession({ id: 7, username: "alice" });
     mock.onPost("/auth/login").reply(401, { detail: "invalid_credentials" });
     const replaceMock = vi.fn();
     vi.stubGlobal("location", { ...window.location, pathname: "/dashboard", replace: replaceMock });
 
     await expect(api.post("/auth/login", {})).rejects.toThrow();
-    expect(useAuthStore.getState().token).toBe("u_7");
+    expect(useAuthStore.getState().user).toEqual({ id: 7, username: "alice" });
     expect(replaceMock).not.toHaveBeenCalled();
   });
 });

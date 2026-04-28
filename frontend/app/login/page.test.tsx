@@ -25,31 +25,36 @@ describe("LoginPage", () => {
 
   afterEach(() => mock.restore());
 
-  it("submits credentials and stores session on success", async () => {
+  it("submits credentials and stores user on success", async () => {
     mock.onPost("/auth/login").reply(200, {
-      token: "u_7",
       user: { id: 7, username: "alice" },
+      message: "alice",
     });
     render(<LoginPage />);
     await userEvent.type(screen.getByLabelText(/username/i), "alice");
     await userEvent.type(screen.getByLabelText(/password/i), "hunter2");
     fireEvent.click(screen.getByRole("button", { name: /sign in|login/i }));
 
-    await waitFor(() => expect(useAuthStore.getState().token).toBe("u_7"));
-    expect(pushMock).toHaveBeenCalledWith("/");
+    await waitFor(() =>
+      expect(useAuthStore.getState().user).toEqual({ id: 7, username: "alice" }),
+    );
+    expect(pushMock).toHaveBeenCalledWith("/chat");
   });
 
-  it("shows the invalid_credentials error on 401", async () => {
-    mock.onPost("/auth/login").reply(401, { detail: "invalid_credentials" });
+  it("shows invalid_credentials when returned username does not match", async () => {
+    mock.onPost("/auth/login").reply(200, {
+      user: { id: 7, username: "bob" },
+      message: "bob",
+    });
     render(<LoginPage />);
     await userEvent.type(screen.getByLabelText(/username/i), "alice");
-    await userEvent.type(screen.getByLabelText(/password/i), "wrong");
+    await userEvent.type(screen.getByLabelText(/password/i), "anything");
     fireEvent.click(screen.getByRole("button", { name: /sign in|login/i }));
 
     expect(await screen.findByTestId("login-error")).toHaveAttribute(
       "data-error-key",
       "auth.error.invalid_credentials",
     );
-    expect(useAuthStore.getState().token).toBeNull();
+    expect(useAuthStore.getState().user).toBeNull();
   });
 });
