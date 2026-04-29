@@ -1,7 +1,5 @@
 "use client";
 
-import { create } from "zustand";
-
 import {
   type KnowledgeBase,
   createKnowledgeBase,
@@ -9,6 +7,7 @@ import {
   listKnowledgeBases,
   updateKnowledgeBase,
 } from "./knowledge-bases";
+import { createSimpleStore, useSimpleStore } from "./simple-store";
 
 type KbState = {
   kbs: KnowledgeBase[];
@@ -22,14 +21,14 @@ type KbState = {
   setFileCount: (id: number, count: number) => void;
 };
 
-export const useKbStore = create<KbState>((set, get) => ({
+const kbStore = createSimpleStore<KbState>({
   kbs: [],
   loaded: false,
   refresh: async () => {
     try {
-      set({ kbs: await listKnowledgeBases(), loaded: true });
+      kbStore.setState({ kbs: await listKnowledgeBases(), loaded: true });
     } catch {
-      set({ loaded: true });
+      kbStore.setState({ loaded: true });
     }
   },
   create: async (name, description) => {
@@ -42,31 +41,35 @@ export const useKbStore = create<KbState>((set, get) => ({
       file_count: 0,
       created_at: created.created_at,
     };
-    set({ kbs: [row, ...get().kbs] });
+    kbStore.setState((cur) => ({ kbs: [row, ...cur.kbs] }));
     return row;
   },
   remove: async (id) => {
     await deleteKnowledgeBase(id);
-    set({ kbs: get().kbs.filter((k) => k.id !== id) });
+    kbStore.setState((cur) => ({ kbs: cur.kbs.filter((k) => k.id !== id) }));
   },
   rename: async (id, name) => {
     const updated = await updateKnowledgeBase(id, { name });
-    set({
-      kbs: get().kbs.map((k) =>
+    kbStore.setState((cur) => ({
+      kbs: cur.kbs.map((k) =>
         k.id === id ? { ...k, name: updated.name, description: updated.description } : k,
       ),
-    });
+    }));
   },
   bumpFileCount: (id, delta) => {
-    set({
-      kbs: get().kbs.map((k) =>
+    kbStore.setState((cur) => ({
+      kbs: cur.kbs.map((k) =>
         k.id === id ? { ...k, file_count: Math.max(0, k.file_count + delta) } : k,
       ),
-    });
+    }));
   },
   setFileCount: (id, count) => {
-    set({
-      kbs: get().kbs.map((k) => (k.id === id ? { ...k, file_count: count } : k)),
-    });
+    kbStore.setState((cur) => ({
+      kbs: cur.kbs.map((k) => (k.id === id ? { ...k, file_count: count } : k)),
+    }));
   },
-}));
+});
+
+export function useKbStore<T>(selector: (s: KbState) => T): T {
+  return useSimpleStore(kbStore, selector);
+}

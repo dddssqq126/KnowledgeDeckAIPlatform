@@ -5,8 +5,8 @@ Revises: 0005
 Create Date: 2026-04-26 14:30:00
 
 Stores reference PPTX templates attached to a slide session. The shape is
-a JSONB array of {filename, minio_key, size_bytes} objects. Bytes live
-in MinIO (so Presenton restarts don't break references); render-time
+a JSONB array of {filename, storage_key, size_bytes} objects. Bytes live
+in local object storage (so Presenton restarts don't break references); render-time
 flow re-uploads each file to Presenton to obtain a fresh path.
 """
 from typing import Sequence, Union

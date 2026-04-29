@@ -42,7 +42,7 @@ The codebase is organized so each user-facing module is a self-contained subtree
 
 | You want… | Backend take | Frontend take | Notes |
 |---|---|---|---|
-| 🐳 **Just the Docker / infra stack** (services + glue, no app logic) | `docker-compose.yml`, `.env.example`, `backend/Dockerfile`, `frontend/Dockerfile` | — | Postgres + MinIO + Qdrant + Presenton + 3 vLLM containers; the app pieces below plug into this |
+| 🐳 **Just the Docker / infra stack** (services + glue, no app logic) | `docker-compose.yml`, `.env.example`, `backend/Dockerfile`, `frontend/Dockerfile` | — | SQLite + local storage + Qdrant + Presenton + 3 vLLM containers; the app pieces below plug into this |
 | 🗂️ **KB ingest + RAG** (file upload → vector store, no chat UI) | `backend/app/shared/`, `backend/app/features/{rag,knowledge_bases}/`, `backend/app/db/` | `frontend/app/(protected)/knowledge-bases/`, `frontend/lib/{kb-store,knowledge-bases,api,auth-store}.ts`, `frontend/components/{DropUpload,AuthGuard,AppSidebar}.tsx` | The cleanest standalone feature; no upward deps on Chat or Slide |
 | 📚 **Just the RAG retrieval module** (as a library, against pre-existing data) | `backend/app/features/rag/` (services + admin reindex) + `backend/app/db/` (KnowledgeBase + KnowledgeFile models) | — | Treat `rag.retrieve_context(user_id, kb_ids, query)` as a black box |
 | 💬 **Chat** | KB + add `backend/app/features/chat/` | KB-frontend + `frontend/app/(protected)/page.tsx`, `frontend/lib/{chat-store,chat}.ts`, `components/ChatInput.tsx` | SSE streaming + multi-turn history + optional RAG |
@@ -119,7 +119,7 @@ your question  ─┤  rewriter (chat-only, every turn)     │
               ▼                                          ▼
    ┌──────────────────────┐                ┌──────────────────────┐
    │ embed dense          │                │ embed sparse (BM25)  │
-   │ bge-m3 (1024-d)      │                │ Qdrant/bm25          │
+   │ bge-m3 (1024-d)      │                │ BM25-style sparse    │
    │ via vLLM /embeddings │                │ in-process           │
    └──────────┬───────────┘                └──────────┬───────────┘
               │                                       │
@@ -223,11 +223,11 @@ For the full pipeline implementation see [docs/ARCHITECTURE.md § RAG](docs/ARCH
 | Backend | FastAPI, SQLAlchemy 2.0 async, Pydantic, Alembic |
 | LLM | vLLM (OpenAI-compatible) — default Google Gemma 4 E4B |
 | Embedding | vLLM serving BAAI/bge-m3 (1024-d dense) |
-| Sparse | fastembed `Qdrant/bm25` (in-process) |
+| Sparse | dependency-light BM25-style hashing + Qdrant IDF (in-process) |
 | Reranker | vLLM `--runner pooling --convert classify` serving BAAI/bge-reranker-v2-m3 |
 | Vectors | Qdrant 1.12+ with named vectors + RRF fusion |
-| Object store | MinIO (S3-compatible) |
-| Database | Postgres 16 |
+| Object store | Local filesystem (`LOCAL_STORAGE_ROOT` + `STORAGE_BUCKET`) |
+| Database | SQLite |
 | Slide rendering | Presenton (`ghcr.io/presenton/presenton`) |
 
 ---
@@ -249,14 +249,14 @@ Open `.env` and at minimum set:
 - `INITIAL_USER_PASSWORD=<choose-one>`
 - `CORS_ORIGINS=http://localhost:3000` (or `http://<your-host>:3000` if accessing remotely)
 
-Defaults work for everything else (Qdrant / MinIO / vLLM / Presenton credentials are local-only).
+Defaults work for everything else (Qdrant / object-storage / vLLM / Presenton credentials are local-only).
 
 ### 2. Bring up the stack
 
-**Without GPU services** (Postgres / Qdrant / MinIO / Presenton / backend / frontend only — useful for iterating UI, but Chat / RAG / Slides won't work):
+**Without GPU services** (SQLite / Qdrant / Presenton / backend / frontend — useful for iterating UI, but Chat / RAG / Slides won't work):
 
 ```bash
-docker compose up postgres qdrant minio presenton backend frontend
+docker compose up qdrant presenton backend frontend
 ```
 
 **Full stack with GPU** (recommended):
@@ -304,7 +304,7 @@ docker compose --profile gpu down
 Other useful variants:
 
 ```bash
-# Same, plus delete all volumes (Postgres / MinIO / Qdrant / Presenton
+# Same, plus delete all volumes (Postgres / object storage / Qdrant / Presenton
 # data + the Hugging Face model cache). Destructive — only run if you
 # really want a clean slate.
 docker compose --profile gpu down -v
@@ -355,7 +355,7 @@ All three vLLM services default to `GPU_DEVICE=0` (single-GPU mode). To split ac
 
 ### Other services
 
-`MINIO_*`, `QDRANT_URL`, `PRESENTON_*`, and `DATABASE_URL` all have local-network defaults that work out of the box.
+`LOCAL_STORAGE_ROOT`, `STORAGE_BUCKET`, `QDRANT_PATH`, `PRESENTON_*`, and `DATABASE_URL` all have local defaults that work out of the box.
 
 ---
 
@@ -460,7 +460,7 @@ frontend/
 docs/
   ARCHITECTURE.md            ← Full system design + per-feature deep-dive
   API.md                     ← Endpoint reference + curl recipes
-docker-compose.yml           ← All services (postgres, qdrant, minio, vllm × 3, presenton, backend, frontend)
+docker-compose.yml           ← All services (sqlite in backend, qdrant, local storage volume, vllm × 3, presenton, backend, frontend)
 .env.example                 ← Documented config template
 ```
 

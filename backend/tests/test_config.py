@@ -12,7 +12,7 @@ def test_settings_defaults_match_local_development() -> None:
     assert settings.embedding_model == "BAAI/bge-m3"
     assert settings.gpu_device == "0"
     assert settings.database_url == (
-        "postgresql+psycopg://knowledgedeck:change-me@knowledgedeck_postgres:5432/knowledgedeck"
+        "sqlite+aiosqlite:///./knowledgedeck.db"
     )
     assert settings.initial_user_username == ""
     assert settings.initial_user_password == ""
@@ -38,29 +38,24 @@ def test_settings_accept_endpoint_overrides() -> None:
 
 def test_settings_accept_initial_user_overrides() -> None:
     settings = Settings(
-        database_url="postgresql+psycopg://test:test@localhost:5432/test",
+        database_url="sqlite+aiosqlite:///./test.db",
         initial_user_username="admin",
         initial_user_password="admin-password",
     )
 
-    assert settings.database_url == "postgresql+psycopg://test:test@localhost:5432/test"
+    assert settings.database_url == "sqlite+aiosqlite:///./test.db"
     assert settings.initial_user_username == "admin"
     assert settings.initial_user_password == "admin-password"
 
 
-def test_settings_expose_minio_fields(monkeypatch) -> None:
+def test_settings_expose_storage_fields(monkeypatch) -> None:
     from app.core.config import Settings
 
-    monkeypatch.setenv("MINIO_ENDPOINT", "knowledgedeck_minio:9000")
-    monkeypatch.setenv("MINIO_ACCESS_KEY", "k")
-    monkeypatch.setenv("MINIO_SECRET_KEY", "s")
-    monkeypatch.setenv("MINIO_BUCKET", "kd-test")
+    monkeypatch.setenv("LOCAL_STORAGE_ROOT", "/tmp/kd-storage")
+    monkeypatch.setenv("STORAGE_BUCKET", "kd-test")
     s = Settings()
-    assert s.minio_endpoint == "knowledgedeck_minio:9000"
-    assert s.minio_access_key == "k"
-    assert s.minio_secret_key == "s"
-    assert s.minio_bucket == "kd-test"
-    assert s.minio_secure is False
+    assert s.local_storage_root == "/tmp/kd-storage"
+    assert s.storage_bucket == "kd-test"
     assert s.max_upload_bytes == 52_428_800
 
 

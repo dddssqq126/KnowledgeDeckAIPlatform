@@ -26,6 +26,7 @@ export function AppSidebar() {
 
   const onDashboard = pathname === "/dashboard";
   const onChat = pathname === "/";
+  const onPresentonChat = pathname.startsWith("/presenton");
   const onKb = pathname.startsWith("/knowledge-bases");
   const onSlides = pathname.startsWith("/slides");
 
@@ -35,8 +36,8 @@ export function AppSidebar() {
   }
 
   return (
-    <aside className="hidden w-64 flex-col border-r border-border bg-white/80 md:flex">
-      <div className="border-b border-border px-4 py-4 text-lg font-semibold">
+    <aside className="hidden w-64 flex-col border-r border-zinc-800 bg-zinc-950 text-zinc-100 md:flex">
+      <div className="border-b border-zinc-800 px-4 py-4 text-lg font-semibold">
         KnowledgeDeck
       </div>
       <nav className="space-y-1 px-2 py-3 text-sm">
@@ -49,27 +50,32 @@ export function AppSidebar() {
         <NavLink href="/" active={onChat} icon={MessageSquare}>
           Chat
         </NavLink>
+        <NavLink href="/presenton/chat" active={onPresentonChat} icon={MessageSquare}>
+          Presenton Chat
+        </NavLink>
         <NavLink href="/slides" active={onSlides} icon={Presentation}>
           Slide Maker
         </NavLink>
       </nav>
 
       {onChat ? (
-        <ChatList activeSidParam={params.get("sid")} />
+        <ChatList activeSidParam={params.get("sid")} basePath="/" />
+      ) : onPresentonChat ? (
+        <ChatList activeSidParam={params.get("sid")} basePath="/presenton/chat" />
       ) : onKb ? (
         <KbList activeIdParam={routeParams?.id ?? null} />
       ) : onSlides ? (
         <SlideList activeIdParam={routeParams?.id ?? null} />
       ) : null /* Dashboard: no lower list per Q1=A. */}
 
-      <div className="border-t border-border px-3 py-3 text-xs text-muted-foreground">
+      <div className="border-t border-zinc-800 px-3 py-3 text-xs text-zinc-400">
         <div className="mb-2 truncate" title={user?.username}>
           {user?.username ?? ""}
         </div>
         <button
           type="button"
           onClick={handleLogout}
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1 hover:bg-muted hover:text-foreground"
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1 hover:bg-zinc-800 hover:text-zinc-100"
         >
           <LogOut className="h-4 w-4" />
           Logout
@@ -95,8 +101,8 @@ function NavLink({
       href={href}
       className={`flex items-center gap-2 rounded-md px-3 py-2 ${
         active
-          ? "bg-muted text-foreground"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+          ? "bg-zinc-800 text-zinc-100"
+          : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
       }`}
     >
       <Icon className="h-4 w-4" />
@@ -107,7 +113,13 @@ function NavLink({
 
 // --- Lower-list bindings: each variant subscribes to its own Zustand store ---
 
-function ChatList({ activeSidParam }: { activeSidParam: string | null }) {
+function ChatList({
+  activeSidParam,
+  basePath,
+}: {
+  activeSidParam: string | null;
+  basePath: string;
+}) {
   const router = useRouter();
   const sessions = useChatSessionsStore((s) => s.sessions);
   const loaded = useChatSessionsStore((s) => s.loaded);
@@ -127,14 +139,14 @@ function ChatList({ activeSidParam }: { activeSidParam: string | null }) {
       items={sessions}
       loaded={loaded}
       activeId={activeId}
-      onSelect={(id) => router.push(`/?sid=${id}`)}
+      onSelect={(id) => router.push(`${basePath}?sid=${id}`)}
       onCreate={async () => {
         const s = await newChat();
-        router.push(`/?sid=${s.id}`);
+        router.push(`${basePath}?sid=${s.id}`);
       }}
       onDelete={async (id) => {
         await remove(id);
-        if (id === activeId) router.push("/");
+        if (id === activeId) router.push(basePath);
       }}
       onRename={async (id, title) => {
         await rename(id, title);

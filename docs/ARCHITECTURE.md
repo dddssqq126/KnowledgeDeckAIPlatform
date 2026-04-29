@@ -63,7 +63,7 @@ Six runtime services, all in `docker-compose.yml`:
 | `knowledgedeck_backend` | (built) | 8080:8080 | FastAPI app |
 | `knowledgedeck_frontend` | (built) | 3000:3000 | Next.js dev server |
 | `knowledgedeck_postgres` | postgres:16 | 5432 (internal) | Metadata: users, KBs, files, chat/slide sessions |
-| `knowledgedeck_minio` | minio/minio | 9000 (internal) | Object store: original uploads + rendered PPTX |
+| `knowledgedeck_backend` local volume | named volume | mounted at `/var/lib/knowledgedeck-storage` | Object store: original uploads + rendered PPTX |
 | `knowledgedeck_qdrant` | qdrant:1.12 | 6333 (internal) | Vector store: dense + sparse named vectors |
 | `knowledgedeck_presenton` | ghcr.io/presenton/presenton | 5001 (internal) | PPTX rendering service |
 | `knowledgedeck_vllm_chat` | vllm:0.19.1 | 8000:8000 | Chat LLM (default Gemma 4 E4B) |
@@ -102,7 +102,7 @@ backend/
 │   │   │       ├── document_parser.py # txt/cs/md/pdf/docx/pptx parsers
 │   │   │       ├── text_splitter.py   # LangChain RecursiveCharacterTextSplitter
 │   │   │       ├── qdrant_store.py    # named-vector schema + hybrid_search
-│   │   │       ├── sparse_embed.py    # fastembed BM25 wrapper
+│   │   │       ├── sparse_embed.py    # BM25-style hashing sparse wrapper
 │   │   │       └── model_clients.py   # EmbeddingClient + RerankClient
 │   │   ├── knowledge_bases/       # 🗂️ KB management
 │   │   │   ├── api/
@@ -213,7 +213,7 @@ User uploads file.docx via POST /knowledge-bases/{kb_id}/files
    │                  ▼                                   │
    │ Two parallel embeds:                                 │
    │   bge-m3 dense (1024-d cosine)                       │
-   │   fastembed BM25 sparse (in-process, no GPU)         │
+   │   BM25-style sparse + Qdrant IDF (in-process)        │
    │                  ▼                                   │
    │ qdrant_store.upsert_chunks                           │
    │   point.vector = {dense: [...], sparse: SparseVector}│
@@ -268,7 +268,7 @@ async def retrieve_context(*, user_id: int, kb_ids: list[int] | None, query: str
 Step 1. Embed query in parallel
         ┌────────────────────────────┐
         │ bge-m3 dense (1024-d)      │ via vLLM /embeddings
-        │ fastembed BM25 sparse      │ in-process
+        │ BM25-style sparse + IDF    │ in-process
         └────────────────────────────┘
 
 Step 2. Qdrant Query API hybrid search
@@ -508,7 +508,7 @@ POST /slide-sessions/{id}/render
      internal helper at this version.
   6. Read the resulting .pptx from the shared volume mount
      /presenton_data/<presentation_id>.pptx
-  7. PUT to MinIO at slide-sessions/{id}/latest.pptx (overwrites)
+  7. PUT to local object storage at slide-sessions/{id}/latest.pptx (overwrites)
   8. Persist a [RENDERED:N seconds] marker message in the chat
      OR a [RENDER_FAILED:N seconds] message on Presenton failure
   9. Return both updated session + the new message; frontend appends
@@ -540,7 +540,7 @@ Visual templates: 4 ship with Presenton (`general` / `modern` / `standard` / `sw
 
 ### Health
 
-`GET /health` returns 200 immediately (liveness). `GET /ready` checks Postgres + MinIO (readiness). Used by docker compose healthchecks.
+`GET /health` returns 200 immediately (liveness). `GET /ready` checks Postgres + local object storage (readiness). Used by docker compose healthchecks.
 
 ### LLM info
 
@@ -611,8 +611,8 @@ All config lives in `.env`. Settings are loaded once at startup via Pydantic; ru
 | Reranker | `RERANK_BASE_URL`, `RERANK_MODEL` + `VLLM_RERANK_*` |
 | RAG knobs | `RAG_DENSE_TOP_K`, `RAG_FINAL_TOP_K`, `RAG_MIN_SCORE`, `RAG_RERANK_MIN_SCORE` |
 | Chunking | `CHUNK_CHARS`, `CHUNK_OVERLAP` |
-| Storage | `MINIO_*`, `MAX_UPLOAD_BYTES` |
-| Vectors | `QDRANT_URL`, `QDRANT_COLLECTION`, `EMBEDDING_DIM` |
+| Storage | `LOCAL_STORAGE_ROOT`, `STORAGE_BUCKET`, `MAX_UPLOAD_BYTES` |
+| Vectors | `QDRANT_PATH` (or `QDRANT_URL`), `QDRANT_COLLECTION`, `EMBEDDING_DIM` |
 | Slide rendering | `PRESENTON_URL`, `PRESENTON_USERNAME`, `PRESENTON_PASSWORD`, `PRESENTON_DATA_ROOT` |
 | Database | `DATABASE_URL` |
 | GPU placement | `GPU_DEVICE`, `VLLM_RERANK_GPU_DEVICE` |

@@ -65,43 +65,15 @@ async def db_session(shared_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
             await session.rollback()
 
 
-@pytest.fixture(scope="session")
-def minio_container():
-    from testcontainers.minio import MinioContainer
-
-    with MinioContainer("minio/minio:RELEASE.2024-10-13T13-34-11Z") as container:
-        # Create the test bucket once per session so per-test code never sees
-        # a "NoSuchBucket" error from MinIO. ensure_bucket() in lifespan only
-        # runs in production startup; tests bypass lifespan via ASGITransport.
-        client = container.get_client()
-        if not client.bucket_exists("kd-test"):
-            client.make_bucket("kd-test")
-        yield container
-
-
-@pytest.fixture(scope="session")
-def minio_settings(minio_container) -> dict:
-    config = minio_container.get_config()
-    # `config` shape: {"endpoint": "host:port", "access_key": "...", "secret_key": "..."}
-    return {
-        "endpoint": config["endpoint"],
-        "access_key": config["access_key"],
-        "secret_key": config["secret_key"],
-        "bucket": "kd-test",
-    }
-
-
 @pytest.fixture(autouse=True)
-def _patch_app_storage(monkeypatch, minio_settings) -> None:
-    """Point app.services.object_storage at the test MinIO container."""
+def _patch_app_storage(monkeypatch, tmp_path_factory) -> None:
+    """Point app object storage at per-session local filesystem storage."""
     from app.features.knowledge_bases.services import object_storage as storage
 
-    client = storage.MinioClient(
-        endpoint=minio_settings["endpoint"],
-        access_key=minio_settings["access_key"],
-        secret_key=minio_settings["secret_key"],
-        bucket=minio_settings["bucket"],
-        secure=False,
+    root = tmp_path_factory.mktemp("kd-storage")
+    client = storage.LocalObjectStorageClient(
+        root=str(root),
+        bucket="kd-test",
     )
     monkeypatch.setattr(storage, "_client", client, raising=False)
 

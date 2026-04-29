@@ -4,7 +4,6 @@ from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy import (
-    BigInteger,
     DateTime,
     Enum as SAEnum,
     ForeignKey,
@@ -12,16 +11,17 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+ID_TYPE = sa.BigInteger().with_variant(sa.Integer(), "sqlite")
 
 
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
     username: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     password: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -41,9 +41,9 @@ class FileStatus(enum.Enum):
 class KnowledgeBase(Base):
     __tablename__ = "knowledge_bases"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
     owner_user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("users.id"), nullable=False
+        ID_TYPE, ForeignKey("users.id"), nullable=False
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -72,19 +72,19 @@ class KnowledgeBase(Base):
 class KnowledgeFile(Base):
     __tablename__ = "files"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
     knowledge_base_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("knowledge_bases.id"), nullable=False
+        ID_TYPE, ForeignKey("knowledge_bases.id"), nullable=False
     )
     # Denormalized from knowledge_bases.owner_user_id for direct
     # ownership filtering on file queries without a join. Used by
     # Sub-projects C/D for retrieval permission filtering.
     owner_user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("users.id"), nullable=False
+        ID_TYPE, ForeignKey("users.id"), nullable=False
     )
     filename: Mapped[str] = mapped_column(Text, nullable=False)
     extension: Mapped[str] = mapped_column(Text, nullable=False)
-    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(ID_TYPE, nullable=False)
     content_sha256: Mapped[str] = mapped_column(Text, nullable=False)
     storage_key: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[FileStatus] = mapped_column(
@@ -126,9 +126,9 @@ class ChatRole(enum.Enum):
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
     owner_user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("users.id"), nullable=False
+        ID_TYPE, ForeignKey("users.id"), nullable=False
     )
     title: Mapped[str] = mapped_column(Text, nullable=False, default="New Chat")
     created_at: Mapped[datetime] = mapped_column(
@@ -149,9 +149,9 @@ class ChatSession(Base):
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
     session_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("chat_sessions.id"), nullable=False
+        ID_TYPE, ForeignKey("chat_sessions.id"), nullable=False
     )
     role: Mapped[ChatRole] = mapped_column(
         SAEnum(
@@ -164,7 +164,7 @@ class ChatMessage(Base):
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     # List of {"file_id": int, "filename": str} dicts. NULL on user messages.
-    citations: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    citations: Mapped[list[dict[str, Any]] | None] = mapped_column(sa.JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -187,9 +187,9 @@ class SlideRole(enum.Enum):
 class SlideSession(Base):
     __tablename__ = "slide_sessions"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
     owner_user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("users.id"), nullable=False
+        ID_TYPE, ForeignKey("users.id"), nullable=False
     )
     title: Mapped[str] = mapped_column(Text, nullable=False, default="New deck")
     status: Mapped[SlideStatus] = mapped_column(
@@ -228,9 +228,9 @@ class SlideSession(Base):
 class SlideMessage(Base):
     __tablename__ = "slide_messages"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
     session_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("slide_sessions.id"), nullable=False
+        ID_TYPE, ForeignKey("slide_sessions.id"), nullable=False
     )
     role: Mapped[SlideRole] = mapped_column(
         SAEnum(
@@ -242,7 +242,7 @@ class SlideMessage(Base):
         nullable=False,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    citations: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    citations: Mapped[list[dict[str, Any]] | None] = mapped_column(sa.JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

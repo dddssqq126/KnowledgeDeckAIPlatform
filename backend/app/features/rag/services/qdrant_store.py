@@ -5,8 +5,9 @@ isolation is enforced via payload filters at query time, not via separate
 collections.
 
 Hybrid search: each point carries a named `dense` vector (bge-m3 1024-d
-cosine) and a named `sparse` vector (BM25 via fastembed). At retrieval we
-prefetch top-N from each, then RRF-fuse with Qdrant's Query API.
+cosine) and a named `sparse` vector (BM25-style hashed lexical
+features, with Qdrant IDF modifier). At retrieval we prefetch top-N
+from each, then RRF-fuse with Qdrant's Query API.
 """
 from __future__ import annotations
 
@@ -31,7 +32,10 @@ def _get_client() -> QdrantClient:
     global _client
     if _client is None:
         s = get_settings()
-        _client = QdrantClient(url=s.qdrant_url)
+        if s.qdrant_path:
+            _client = QdrantClient(path=s.qdrant_path)
+        else:
+            _client = QdrantClient(url=s.qdrant_url)
     return _client
 
 
@@ -69,7 +73,8 @@ async def ensure_collection() -> None:
             },
             sparse_vectors_config={
                 SPARSE_VEC: qm.SparseVectorParams(
-                    index=qm.SparseIndexParams(on_disk=False)
+                    index=qm.SparseIndexParams(on_disk=False),
+                    modifier=qm.Modifier.IDF,
                 )
             },
         )
