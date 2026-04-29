@@ -12,12 +12,23 @@ export type AuthState = {
 };
 
 const STORAGE_KEY = "knowledgedeck-auth";
+const DEFAULT_TOKEN = process.env.NEXT_PUBLIC_DEFAULT_TOKEN ?? "dev-token";
+const DEFAULT_OWNER_USER_ID = Number(process.env.NEXT_PUBLIC_DEFAULT_OWNER_USER_ID ?? "1");
+const DEFAULT_USERNAME = process.env.NEXT_PUBLIC_DEFAULT_USERNAME ?? "owner";
+
+const defaultUser: AuthUser = {
+  id: Number.isFinite(DEFAULT_OWNER_USER_ID) ? DEFAULT_OWNER_USER_ID : 1,
+  username: DEFAULT_USERNAME,
+};
+
+function defaultAuthState() {
+  return { token: DEFAULT_TOKEN, user: defaultUser };
+}
 
 const authStore = createSimpleStore<AuthState>({
-  token: null,
-  user: null,
+  ...defaultAuthState(),
   setSession: (token, user) => authStore.setState({ token, user }),
-  clearSession: () => authStore.setState({ token: null, user: null }),
+  clearSession: () => authStore.setState(defaultAuthState()),
 });
 
 export const useAuthStore = createStoreHook(authStore) as ReturnType<typeof createStoreHook<AuthState>> & {
@@ -36,15 +47,18 @@ useAuthStore.persist = {
   async rehydrate() {
     if (typeof window === "undefined") return;
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
+    if (!raw) {
+      authStore.setState(defaultAuthState());
+      return;
+    }
     try {
       const data = JSON.parse(raw) as { state?: { token?: string | null; user?: AuthUser | null } };
       authStore.setState({
-        token: data.state?.token ?? null,
-        user: data.state?.user ?? null,
+        token: data.state?.token ?? DEFAULT_TOKEN,
+        user: data.state?.user ?? defaultUser,
       });
     } catch {
-      authStore.setState({ token: null, user: null });
+      authStore.setState(defaultAuthState());
     }
   },
 };
