@@ -1,7 +1,5 @@
 "use client";
 
-import { create } from "zustand";
-
 import {
   type SlideSession,
   createSlideSession,
@@ -9,6 +7,7 @@ import {
   listSlideSessions,
   updateSlideSession,
 } from "./slides";
+import { createSimpleStore, useSimpleStore } from "./simple-store";
 
 type SlideState = {
   sessions: SlideSession[];
@@ -22,45 +21,49 @@ type SlideState = {
   bumpUpdatedAt: (id: number) => void;
 };
 
-export const useSlideStore = create<SlideState>((set, get) => ({
+const slideStore = createSimpleStore<SlideState>({
   sessions: [],
   loaded: false,
   refresh: async () => {
     try {
-      set({ sessions: await listSlideSessions(), loaded: true });
+      slideStore.setState({ sessions: await listSlideSessions(), loaded: true });
     } catch {
-      set({ loaded: true });
+      slideStore.setState({ loaded: true });
     }
   },
   newSession: async () => {
     const s = await createSlideSession();
-    set({ sessions: [s, ...get().sessions] });
+    slideStore.setState((cur) => ({ sessions: [s, ...cur.sessions] }));
     return s;
   },
   remove: async (id) => {
     await deleteSlideSession(id);
-    set({ sessions: get().sessions.filter((s) => s.id !== id) });
+    slideStore.setState((cur) => ({ sessions: cur.sessions.filter((s) => s.id !== id) }));
   },
   rename: async (id, title) => {
     const updated = await updateSlideSession(id, title);
-    set({
-      sessions: get().sessions.map((s) =>
+    slideStore.setState((cur) => ({
+      sessions: cur.sessions.map((s) =>
         s.id === id ? { ...s, title: updated.title } : s,
       ),
-    });
+    }));
   },
   patch: (id, patch) => {
-    set({
-      sessions: get().sessions.map((s) => (s.id === id ? { ...s, ...patch } : s)),
-    });
+    slideStore.setState((cur) => ({
+      sessions: cur.sessions.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+    }));
   },
   bumpUpdatedAt: (id) => {
     const now = new Date().toISOString();
-    const list = [...get().sessions];
+    const list = [...slideStore.getState().sessions];
     const idx = list.findIndex((s) => s.id === id);
     if (idx < 0) return;
     const [target] = list.splice(idx, 1);
     list.unshift({ ...target, updated_at: now });
-    set({ sessions: list });
+    slideStore.setState({ sessions: list });
   },
-}));
+});
+
+export function useSlideStore<T>(selector: (s: SlideState) => T): T {
+  return useSimpleStore(slideStore, selector);
+}
