@@ -26,7 +26,8 @@ export function AppSidebar() {
 
   const onDashboard = pathname === "/dashboard";
   const onChat = pathname === "/";
-  const onPresentonChat = pathname.startsWith("/presenton");
+  const onPresentonChat = pathname.startsWith("/presenton/chat");
+  const onPresentonSlides = pathname.startsWith("/presenton/slides");
   const onKb = pathname.startsWith("/knowledge-bases");
   const onSlides = pathname.startsWith("/slides");
 
@@ -53,6 +54,9 @@ export function AppSidebar() {
         <NavLink href="/presenton/chat" active={onPresentonChat} icon={MessageSquare}>
           Presenton Chat
         </NavLink>
+        <NavLink href="/presenton/slides" active={onPresentonSlides} icon={Presentation}>
+          Presenton Slides
+        </NavLink>
         <NavLink href="/slides" active={onSlides} icon={Presentation}>
           Slide Maker
         </NavLink>
@@ -62,6 +66,8 @@ export function AppSidebar() {
         <ChatList activeSidParam={params.get("sid")} basePath="/" />
       ) : onPresentonChat ? (
         <ChatList activeSidParam={params.get("sid")} basePath="/presenton/chat" />
+      ) : onPresentonSlides ? (
+        <PresentonSlideFlowList />
       ) : onKb ? (
         <KbList activeIdParam={routeParams?.id ?? null} />
       ) : onSlides ? (
@@ -111,7 +117,7 @@ function NavLink({
   );
 }
 
-// --- Lower-list bindings: each variant subscribes to its own Zustand store ---
+// --- Lower-list bindings: each variant subscribes to its own store ---
 
 function ChatList({
   activeSidParam,
@@ -235,5 +241,15 @@ function SlideList({ activeIdParam }: { activeIdParam: string | null }) {
       }}
       emptyLabel="Start a new deck"
     />
+  );
+}
+
+
+function PresentonSlideFlowList() {
+  return (
+    <div className="px-3 py-3 text-sm text-zinc-400">
+      <p className="mb-2 font-medium text-zinc-300">Presenton Flow</p>
+      <p>進入頁面後可一鍵建立簡報專案，並跳轉到 Slide Maker 編輯。</p>
+    </div>
   );
 }
