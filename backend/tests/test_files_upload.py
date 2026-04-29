@@ -174,7 +174,7 @@ async def test_upload_to_other_users_kb_returns_404(
 
 
 @pytest.mark.asyncio
-async def test_upload_rolls_back_db_when_minio_put_fails(
+async def test_upload_rolls_back_db_when_storage_put_fails(
     http_client, alice: User, db_session, monkeypatch
 ) -> None:
     from sqlalchemy import select
@@ -183,9 +183,9 @@ async def test_upload_rolls_back_db_when_minio_put_fails(
     from app.features.knowledge_bases.services import object_storage as storage
 
     async def boom(*args, **kwargs):
-        raise RuntimeError("simulated minio outage")
+        raise RuntimeError("simulated storage outage")
 
-    monkeypatch.setattr(storage.MinioClient, "put_object", boom, raising=True)
+    monkeypatch.setattr(storage.LocalObjectStorageClient, "put_object", boom, raising=True)
     kb_id = await make_kb(http_client, alice)
     res = await http_client.post(
         f"/knowledge-bases/{kb_id}/files",

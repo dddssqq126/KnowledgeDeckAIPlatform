@@ -32,7 +32,10 @@ def _get_client() -> QdrantClient:
     global _client
     if _client is None:
         s = get_settings()
-        _client = QdrantClient(url=s.qdrant_url)
+        if s.qdrant_path:
+            _client = QdrantClient(path=s.qdrant_path)
+        else:
+            _client = QdrantClient(url=s.qdrant_url)
     return _client
 
 

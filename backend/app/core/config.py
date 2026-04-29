@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
 
     database_url: str = (
-        "postgresql+psycopg://knowledgedeck:change-me@knowledgedeck_postgres:5432/knowledgedeck"
+        "sqlite+aiosqlite:///./knowledgedeck.db"
     )
 
     initial_user_username: str = ""
@@ -27,11 +27,8 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
-    minio_endpoint: str = "knowledgedeck_minio:9000"
-    minio_access_key: str = "change-me"
-    minio_secret_key: str = "change-me"
-    minio_bucket: str = "knowledgedeck"
-    minio_secure: bool = False  # MVP runs MinIO over plain HTTP inside the compose network
+    storage_bucket: str = "knowledgedeck"
+    local_storage_root: str = "/var/lib/knowledgedeck-storage"
 
     # 50 MiB hard cap on a single file upload.
     max_upload_bytes: int = 52_428_800
@@ -49,7 +46,10 @@ class Settings(BaseSettings):
     embedding_model: str = "BAAI/bge-m3"
     embedding_dim: int = 1024  # BAAI/bge-m3 outputs 1024-dim vectors
 
-    qdrant_url: str = "http://knowledgedeck_qdrant:6333"
+    # Local disk mode (no Qdrant server process): set qdrant_path and leave
+    # qdrant_url empty. If qdrant_path is empty, url mode is used.
+    qdrant_url: str = ""
+    qdrant_path: str = "./qdrant_data"
     qdrant_collection: str = "knowledgedeck"
 
     # RAG retrieval knobs.
