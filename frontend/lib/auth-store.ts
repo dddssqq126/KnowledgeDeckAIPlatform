@@ -12,16 +12,20 @@ export type AuthState = {
 };
 
 const STORAGE_KEY = "knowledgedeck-auth";
+const DEFAULT_USER: AuthUser = { id: 1, username: "default-user" };
+const DEFAULT_TOKEN = "default-token";
 
 function loadPersisted(): Pick<AuthState, "token" | "user"> {
   if (typeof window === "undefined") return { token: null, user: null };
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { token: null, user: null };
+    if (!raw) {
+      return { token: DEFAULT_TOKEN, user: DEFAULT_USER };
+    }
     const parsed = JSON.parse(raw) as { token: string | null; user: AuthUser | null };
-    return { token: parsed.token ?? null, user: parsed.user ?? null };
+    return { token: parsed.token ?? DEFAULT_TOKEN, user: parsed.user ?? DEFAULT_USER };
   } catch {
-    return { token: null, user: null };
+    return { token: DEFAULT_TOKEN, user: DEFAULT_USER };
   }
 }
 
