@@ -1,7 +1,6 @@
 "use client";
 
-import { create } from "zustand";
-
+import { createSimpleStore, createStoreHook } from "./simple-store";
 import {
   type ChatSession,
   createSession,
@@ -17,47 +16,44 @@ type ChatSessionsState = {
   newChat: () => Promise<ChatSession>;
   remove: (id: number) => Promise<void>;
   rename: (id: number, title: string) => Promise<ChatSession>;
-  // Local-only update (e.g., after sending a message we already know the
-  // server side has touched updated_at). Keeps the sidebar in sync without
-  // an extra round-trip.
   bumpUpdatedAt: (id: number) => void;
 };
 
-export const useChatSessionsStore = create<ChatSessionsState>((set, get) => ({
+const chatStore = createSimpleStore<ChatSessionsState>({
   sessions: [],
   loaded: false,
   refresh: async () => {
     try {
-      set({ sessions: await listSessions(), loaded: true });
+      chatStore.setState({ sessions: await listSessions(), loaded: true });
     } catch {
-      set({ loaded: true });
+      chatStore.setState({ loaded: true });
     }
   },
   newChat: async () => {
     const s = await createSession();
-    set({ sessions: [s, ...get().sessions] });
+    chatStore.setState((prev) => ({ sessions: [s, ...prev.sessions] }));
     return s;
   },
   remove: async (id) => {
     await deleteSession(id);
-    set({ sessions: get().sessions.filter((s) => s.id !== id) });
+    chatStore.setState((prev) => ({ sessions: prev.sessions.filter((s) => s.id !== id) }));
   },
   rename: async (id, title) => {
     const updated = await updateSession(id, title);
-    set({
-      sessions: get().sessions.map((s) =>
-        s.id === id ? { ...s, title: updated.title } : s,
-      ),
-    });
+    chatStore.setState((prev) => ({
+      sessions: prev.sessions.map((s) => (s.id === id ? { ...s, title: updated.title } : s)),
+    }));
     return updated;
   },
   bumpUpdatedAt: (id) => {
     const now = new Date().toISOString();
-    const list = [...get().sessions];
+    const list = [...chatStore.getState().sessions];
     const idx = list.findIndex((s) => s.id === id);
     if (idx < 0) return;
     const [target] = list.splice(idx, 1);
     list.unshift({ ...target, updated_at: now });
-    set({ sessions: list });
+    chatStore.setState({ sessions: list });
   },
-}));
+});
+
+export const useChatSessionsStore = createStoreHook(chatStore);
