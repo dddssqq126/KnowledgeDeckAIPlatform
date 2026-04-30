@@ -31,8 +31,31 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function ensureMockSeedSession() {
+  if (!USE_MOCK_DATA) return;
+  if (mockSessions.size > 0) return;
+  const now = nowIso();
+  const id = mockNextSessionId++;
+  mockSessions.set(id, {
+    id,
+    title: "Mock RAG Chat",
+    created_at: now,
+    updated_at: now,
+    messages: [
+      {
+        id: mockNextMessageId++,
+        role: "assistant",
+        content: "Mock mode is enabled. Ask me anything and I will answer with mock RAG data.",
+        citations: [{ file_id: 1, filename: "mock-source.txt" }],
+        created_at: now,
+      },
+    ],
+  });
+}
+
 export async function createSession(title?: string): Promise<ChatSession> {
   if (USE_MOCK_DATA) {
+    ensureMockSeedSession();
     const now = nowIso();
     const session: SessionDetail = {
       id: mockNextSessionId++,
@@ -50,6 +73,7 @@ export async function createSession(title?: string): Promise<ChatSession> {
 
 export async function listSessions(): Promise<ChatSession[]> {
   if (USE_MOCK_DATA) {
+    ensureMockSeedSession();
     return Array.from(mockSessions.values()).map(({ messages, ...session }) => session);
   }
   const res = await api.get<ChatSession[]>("/chat/sessions");
@@ -58,6 +82,7 @@ export async function listSessions(): Promise<ChatSession[]> {
 
 export async function getSession(id: number): Promise<SessionDetail> {
   if (USE_MOCK_DATA) {
+    ensureMockSeedSession();
     const session = mockSessions.get(id);
     if (!session) throw new Error("Not found");
     return session;
@@ -68,6 +93,7 @@ export async function getSession(id: number): Promise<SessionDetail> {
 
 export async function updateSession(id: number, title: string): Promise<ChatSession> {
   if (USE_MOCK_DATA) {
+    ensureMockSeedSession();
     const session = mockSessions.get(id);
     if (!session) throw new Error("Not found");
     session.title = title;
@@ -80,6 +106,7 @@ export async function updateSession(id: number, title: string): Promise<ChatSess
 
 export async function deleteSession(id: number): Promise<void> {
   if (USE_MOCK_DATA) {
+    ensureMockSeedSession();
     mockSessions.delete(id);
     return;
   }
@@ -106,6 +133,7 @@ export async function streamChat(
   signal?: AbortSignal,
 ): Promise<void> {
   if (USE_MOCK_DATA) {
+    ensureMockSeedSession();
     const session = mockSessions.get(req.session_id);
     if (!session) {
       handlers.onError("Session not found");
