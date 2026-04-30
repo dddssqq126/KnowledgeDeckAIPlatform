@@ -26,7 +26,6 @@ export function AppSidebar() {
 
   const onDashboard = pathname === "/dashboard";
   const onChat = pathname === "/";
-  const onPresentonChat = pathname.startsWith("/presenton");
   const onKb = pathname.startsWith("/knowledge-bases");
   const onSlides = pathname.startsWith("/slides");
 
@@ -50,9 +49,6 @@ export function AppSidebar() {
         <NavLink href="/" active={onChat} icon={MessageSquare}>
           Chat
         </NavLink>
-        <NavLink href="/presenton/chat" active={onPresentonChat} icon={MessageSquare}>
-          Presenton Chat
-        </NavLink>
         <NavLink href="/slides" active={onSlides} icon={Presentation}>
           Slide Maker
         </NavLink>
@@ -60,8 +56,6 @@ export function AppSidebar() {
 
       {onChat ? (
         <ChatList activeSidParam={params.get("sid")} basePath="/" />
-      ) : onPresentonChat ? (
-        <ChatList activeSidParam={params.get("sid")} basePath="/presenton/chat" />
       ) : onKb ? (
         <KbList activeIdParam={routeParams?.id ?? null} />
       ) : onSlides ? (

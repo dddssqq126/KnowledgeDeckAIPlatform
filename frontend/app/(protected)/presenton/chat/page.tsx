@@ -1,5 +1,5 @@
-import { ChatWorkspace } from "../../../../components/ChatWorkspace";
+import { redirect } from "next/navigation";
 
 export default function PresentonChatPage() {
-  return <ChatWorkspace routeBase="/presenton/chat" pageTitle="Presenton Chat" />;
+  redirect("/");
 }

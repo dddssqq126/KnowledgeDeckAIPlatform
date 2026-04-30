@@ -3,6 +3,8 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import { AUTO_LOGIN } from "./runtime-config";
+
 export type AuthUser = { id: number; username: string };
 
 export type AuthState = {
@@ -15,8 +17,8 @@ export type AuthState = {
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
-      token: null,
-      user: null,
+      token: AUTO_LOGIN ? "mock-token" : null,
+      user: AUTO_LOGIN ? { id: 1, username: "mock-user" } : null,
       setSession: (token, user) => set({ token, user }),
       clearSession: () => set({ token: null, user: null }),
     }),
