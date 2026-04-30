@@ -16,6 +16,7 @@ import {
 } from "../lib/chat";
 import { useKbStore } from "../lib/kb-store";
 import { useLlmInfo } from "../lib/llm-info";
+import { useThemeStore } from "../lib/theme-store";
 
 export function ChatWorkspace({
   routeBase,
@@ -42,6 +43,8 @@ export function ChatWorkspace({
   const kbsLoaded = useKbStore((s) => s.loaded);
   const refreshKbs = useKbStore((s) => s.refresh);
   const llmInfo = useLlmInfo();
+  const theme = useThemeStore((s) => s.mode);
+  const toggleTheme = useThemeStore((s) => s.toggle);
 
   const [streamingText, setStreamingText] = useState("");
   const [streamingCitations, setStreamingCitations] = useState<Citation[] | null>(null);
@@ -150,11 +153,20 @@ export function ChatWorkspace({
   );
 
   return (
-    <section className="flex h-full flex-col bg-zinc-950 text-zinc-100">
-      <header className="flex h-14 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4">
+    <section className={`flex h-full flex-col ${theme === "dark" ? "bg-zinc-950 text-zinc-100" : "bg-zinc-50 text-zinc-900"}`}>
+      <header className={`flex h-14 items-center justify-between border-b px-4 ${theme === "dark" ? "border-zinc-800 bg-zinc-900" : "border-zinc-200 bg-white"}`}>
         <div className="text-sm font-medium">{activeSessionTitle}</div>
-        <div className="text-xs text-zinc-400">
-          Model: {llmInfo?.label ?? "…"}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className={`rounded-md border px-2 py-1 text-xs ${theme === "dark" ? "border-zinc-700 text-zinc-300 hover:bg-zinc-800" : "border-zinc-300 text-zinc-700 hover:bg-zinc-100"}`}
+          >
+            {theme === "dark" ? "Light" : "Dark"}
+          </button>
+          <div className={`text-xs ${theme === "dark" ? "text-zinc-400" : "text-zinc-600"}`}>
+            Model: {llmInfo?.label ?? "…"}
+          </div>
         </div>
       </header>
 

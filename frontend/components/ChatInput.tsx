@@ -12,9 +12,7 @@ type Props = {
 
 export function ChatInput({ knowledgeBases, disabled, onSend }: Props) {
   const [text, setText] = useState("");
-  // Default to RAG enabled — most users want grounded answers and toggling
-  // off is one click. Empty `kb_ids` = no filter (all KBs) on the backend.
-  const [useRag, setUseRag] = useState(true);
+  const useRag = true;
   const [selectedKbIds, setSelectedKbIds] = useState<number[]>([]);
   const [pickerInitialized, setPickerInitialized] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -81,20 +79,11 @@ export function ChatInput({ knowledgeBases, disabled, onSend }: Props) {
         />
         <div className="mt-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-3">
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-400">
-              <input
-                type="checkbox"
-                checked={useRag}
-                onChange={(e) => setUseRag(e.target.checked)}
-                className="h-3.5 w-3.5"
-              />
-              Use RAG
-            </label>
             <div className="relative" ref={pickerRef}>
               <button
                 type="button"
                 onClick={() => setPickerOpen((o) => !o)}
-                disabled={!useRag || knowledgeBases.length === 0}
+                disabled={knowledgeBases.length === 0}
                 className="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
               >
                 {kbLabel} ▾

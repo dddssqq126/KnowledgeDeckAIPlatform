@@ -5,6 +5,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { api } from "../lib/api";
 import { useAuthStore } from "../lib/auth-store";
+import { AUTO_LOGIN, USE_MOCK_DATA } from "../lib/runtime-config";
 
 export function AuthGuard({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -31,6 +32,10 @@ export function AuthGuard({ children }: { children: ReactNode }) {
     if (!hydrated) return;
     if (!token) {
       router.replace("/login");
+      return;
+    }
+    if (AUTO_LOGIN || USE_MOCK_DATA) {
+      setVerified(true);
       return;
     }
     let cancelled = false;
