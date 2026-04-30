@@ -1,11 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { isAxiosError } from "axios";
 
 import { api } from "../../lib/api";
 import { useAuthStore } from "../../lib/auth-store";
+import { AUTO_LOGIN } from "../../lib/runtime-config";
 
 const ERROR_KEYS: Record<string, string> = {
   invalid_credentials: "auth.error.invalid_credentials",
@@ -25,6 +26,14 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [errorKey, setErrorKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!AUTO_LOGIN) return;
+    setSession("mock-token", { id: 1, username: "mock-user" });
+    router.replace("/");
+  }, [router, setSession]);
+
+  if (AUTO_LOGIN) return null;
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
