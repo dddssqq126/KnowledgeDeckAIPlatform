@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, LogOut, MessageSquare, Presentation, Search } from "lucide-react";
+import { LayoutDashboard, LogOut, MessageSquare, Moon, Presentation, Search, Sun } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
@@ -10,6 +10,7 @@ import { useAuthStore } from "../lib/auth-store";
 import { useChatSessionsStore } from "../lib/chat-store";
 import { useKbStore } from "../lib/kb-store";
 import { useSlideStore } from "../lib/slide-store";
+import { useThemeStore } from "../lib/theme-store";
 
 /**
  * Single sidebar shared across all (protected) pages. Top nav is fixed; the
@@ -23,6 +24,8 @@ export function AppSidebar() {
   const routeParams = useParams<{ id?: string }>();
   const user = useAuthStore((s) => s.user);
   const clearSession = useAuthStore((s) => s.clearSession);
+  const theme = useThemeStore((s) => s.mode);
+  const toggleTheme = useThemeStore((s) => s.toggle);
 
   const onDashboard = pathname === "/dashboard";
   const onChat = pathname === "/";
@@ -35,8 +38,8 @@ export function AppSidebar() {
   }
 
   return (
-    <aside className="hidden w-64 flex-col border-r border-zinc-800 bg-zinc-950 text-zinc-100 md:flex">
-      <div className="border-b border-zinc-800 px-4 py-4 text-lg font-semibold">
+    <aside className={`hidden w-64 flex-col border-r md:flex ${theme === "dark" ? "border-zinc-800 bg-zinc-950 text-zinc-100" : "border-zinc-200 bg-white text-zinc-900"}`}>
+      <div className={`border-b px-4 py-4 text-lg font-semibold ${theme === "dark" ? "border-zinc-800" : "border-zinc-200"}`}>
         KnowledgeDeck
       </div>
       <nav className="space-y-1 px-2 py-3 text-sm">
@@ -62,7 +65,15 @@ export function AppSidebar() {
         <SlideList activeIdParam={routeParams?.id ?? null} />
       ) : null /* Dashboard: no lower list per Q1=A. */}
 
-      <div className="border-t border-zinc-800 px-3 py-3 text-xs text-zinc-400">
+      <div className={`border-t px-3 py-3 text-xs ${theme === "dark" ? "border-zinc-800 text-zinc-400" : "border-zinc-200 text-zinc-600"}`}>
+        <button
+          type="button"
+          onClick={toggleTheme}
+          className={`mb-2 flex w-full items-center gap-2 rounded-md px-2 py-1 ${theme === "dark" ? "hover:bg-zinc-800 hover:text-zinc-100" : "hover:bg-zinc-100 hover:text-zinc-900"}`}
+        >
+          {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          {theme === "dark" ? "Light mode" : "Dark mode"}
+        </button>
         <div className="mb-2 truncate" title={user?.username}>
           {user?.username ?? ""}
         </div>
