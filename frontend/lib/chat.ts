@@ -1,7 +1,9 @@
 "use client";
 
 import { api } from "./api";
-import { useAuthStore } from "./auth-store";
+import { resolveExternalUsername, useAuthStore } from "./auth-store";
+import { mockAppendChatTurn } from "./mock-data";
+import { isMockDataMode } from "./mock-mode";
 
 export type Citation = { file_id: number; filename: string };
 
@@ -21,6 +23,14 @@ export type ChatMessage = {
 };
 
 export type SessionDetail = ChatSession & { messages: ChatMessage[] };
+
+export type ChatSearchResult = {
+  session_id: number;
+  session_title: string;
+  matched_role: "user" | "assistant" | null;
+  snippet: string;
+  created_at: string;
+};
 
 export async function createSession(title?: string): Promise<ChatSession> {
   const res = await api.post<ChatSession>("/chat/sessions", { title: title ?? null });
@@ -46,6 +56,11 @@ export async function deleteSession(id: number): Promise<void> {
   await api.delete(`/chat/sessions/${id}`);
 }
 
+export async function searchChatSessions(q: string): Promise<ChatSearchResult[]> {
+  const res = await api.get<ChatSearchResult[]>("/chat/search", { params: { q } });
+  return res.data;
+}
+
 export type StreamRequest = {
   session_id: number;
   message: string;
@@ -69,7 +84,13 @@ export async function streamChat(
   handlers: StreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
+  if (isMockDataMode()) {
+    await mockStreamChat(req, handlers, signal);
+    return;
+  }
+
   const token = useAuthStore.getState().token;
+  const username = resolveExternalUsername();
   const baseURL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
   let res: Response;
   try {
@@ -77,6 +98,7 @@ export async function streamChat(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "X-User-Name": username,
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(req),
@@ -126,4 +148,35 @@ export async function streamChat(
       else if (event === "error") handlers.onError(parsed.message ?? "stream error");
     }
   }
+}
+
+async function mockStreamChat(
+  req: StreamRequest,
+  handlers: StreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const { answer, citations } = mockAppendChatTurn(
+    req.session_id,
+    req.message,
+    req.use_rag,
+    req.kb_ids,
+  );
+  handlers.onCitations(citations);
+  for (const token of chunkText(answer)) {
+    if (signal?.aborted) {
+      handlers.onError("cancelled");
+      return;
+    }
+    handlers.onToken(token);
+    await wait(22);
+  }
+  handlers.onDone();
+}
+
+function chunkText(text: string): string[] {
+  return text.match(/.{1,18}(\s|$)/g) ?? [text];
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

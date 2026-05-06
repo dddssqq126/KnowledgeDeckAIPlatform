@@ -75,6 +75,41 @@ async def test_delete_file_returns_204(http_client, alice: User) -> None:
 
 
 @pytest.mark.asyncio
+async def test_download_file_returns_original_bytes(http_client, alice: User) -> None:
+    _, file_id = await make_kb_and_file(http_client, alice)
+    res = await http_client.get(
+        f"/knowledge-bases/files/{file_id}/download", headers=auth(alice)
+    )
+    assert res.status_code == 200
+    assert res.content == TXT
+    assert res.headers["content-type"].startswith("text/plain")
+    assert 'filename="x.txt"' in res.headers["content-disposition"]
+
+
+@pytest.mark.asyncio
+async def test_download_file_other_user_returns_404(
+    http_client, alice: User, bob: User
+) -> None:
+    _, file_id = await make_kb_and_file(http_client, alice)
+    res = await http_client.get(
+        f"/knowledge-bases/files/{file_id}/download", headers=auth(bob)
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_download_deleted_file_returns_404(http_client, alice: User) -> None:
+    kb_id, file_id = await make_kb_and_file(http_client, alice)
+    await http_client.delete(
+        f"/knowledge-bases/{kb_id}/files/{file_id}", headers=auth(alice)
+    )
+    res = await http_client.get(
+        f"/knowledge-bases/files/{file_id}/download", headers=auth(alice)
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_delete_file_other_user_returns_404(
     http_client, alice: User, bob: User
 ) -> None:

@@ -1,21 +1,29 @@
 import type { AxiosProgressEvent } from "axios";
 import MockAdapter from "axios-mock-adapter";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "./api";
+import { downloadBlob } from "./download";
 import {
   createKnowledgeBase,
   deleteFile,
   deleteKnowledgeBase,
+  downloadKnowledgeFile,
   listFiles,
   listKnowledgeBases,
   uploadFile,
 } from "./knowledge-bases";
 
+vi.mock("./download", () => ({
+  downloadBlob: vi.fn(),
+  safeFilename: (value: string, fallback = "download") => value || fallback,
+}));
+
 describe("knowledge-bases API client", () => {
   let mock: MockAdapter;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     mock = new MockAdapter(api);
   });
 
@@ -86,6 +94,22 @@ describe("knowledge-bases API client", () => {
   it("deleteFile hits DELETE /knowledge-bases/:kb/files/:file", async () => {
     mock.onDelete("/knowledge-bases/3/files/9").reply(204);
     await deleteFile(3, 9);
+  });
+
+  it("downloadKnowledgeFile downloads the file returned by the backend", async () => {
+    const blob = new Blob(["hello"], { type: "text/plain" });
+    mock.onGet("/knowledge-bases/files/9/download").reply((config) => {
+      expect(config.responseType).toBe("blob");
+      return [
+        200,
+        blob,
+        { "content-disposition": 'attachment; filename="server-name.txt"' },
+      ];
+    });
+
+    await downloadKnowledgeFile(9, "fallback.txt");
+
+    expect(downloadBlob).toHaveBeenCalledWith(blob, "server-name.txt");
   });
 
   it("uploadFile does not invoke onProgress when e.total is 0", async () => {
