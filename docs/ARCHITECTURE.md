@@ -41,10 +41,10 @@ A deep-dive into how KnowledgeDeck is built — read this when you want to under
    │     ┌────────────┼─────────────┼───────────┘
    │     │            │             │
    ▼     ▼            ▼             ▼
-┌──────────┐  ┌───────────┐  ┌───────────┐  ┌─────────────────┐
-│ Postgres │  │   MinIO   │  │  Qdrant   │  │   Presenton     │
-│ (ORM)    │  │ (objects) │  │ (vectors) │  │  (PPTX render)  │
-└──────────┘  └───────────┘  └───────────┘  └─────────────────┘
+┌──────────────────────┐  ┌───────────┐  ┌─────────────────┐
+│ SQLite               │  │  Qdrant   │  │   Presenton     │
+│ metadata + blobs     │  │ (vectors) │  │  (PPTX render)  │
+└──────────────────────┘  └───────────┘  └─────────────────┘
                                                   │
                                                   │ vLLM /chat /embed /score
                                                   ▼
@@ -56,14 +56,13 @@ A deep-dive into how KnowledgeDeck is built — read this when you want to under
                                         └────────────────────────┘
 ```
 
-Six runtime services, all in `docker-compose.yml`:
+Runtime services in `docker-compose.yml`:
 
 | Container | Image | Port (host:container) | Purpose |
 |---|---|---|---|
 | `knowledgedeck_backend` | (built) | 8080:8080 | FastAPI app |
 | `knowledgedeck_frontend` | (built) | 3000:3000 | Next.js dev server |
-| `knowledgedeck_postgres` | postgres:16 | 5432 (internal) | Metadata: users, KBs, files, chat/slide sessions |
-| `knowledgedeck_backend` local volume | named volume | mounted at `/var/lib/knowledgedeck-storage` | Object store: original uploads + rendered PPTX |
+| `knowledgedeck_backend` SQLite DB | named volume | mounted at `/data` | Metadata tables plus `object_blobs` for original uploads and rendered PPTX |
 | `knowledgedeck_qdrant` | qdrant:1.12 | 6333 (internal) | Vector store: dense + sparse named vectors |
 | `knowledgedeck_presenton` | ghcr.io/presenton/presenton | 5001 (internal) | PPTX rendering service |
 | `knowledgedeck_vllm_chat` | vllm:0.19.1 | 8000:8000 | Chat LLM (default Gemma 4 E4B) |
@@ -111,7 +110,7 @@ backend/
 │   │   │   └── services/
 │   │   │       ├── knowledge_base_service.py
 │   │   │       ├── file_service.py    # extension + magic-byte validation
-│   │   │       └── object_storage.py  # MinIO async wrapper
+│   │   │       └── object_storage.py  # SQLite object-blob client
 │   │   ├── chat/                  # 💬 Chat
 │   │   │   ├── api/chat.py        # sessions + SSE stream
 │   │   │   └── services/chat_service.py # rewriter + stream_answer
@@ -121,9 +120,9 @@ backend/
 │   │           ├── slide_chat_service.py # planner system prompt + stream_planner
 │   │           └── presenton_client.py   # /v1/ppt/* HTTP wrapper
 │   ├── main.py                    # FastAPI app factory + router registration
-│   ├── startup.py                 # lifespan: ensure MinIO bucket, run migrations
+│   ├── startup.py                 # lifespan: create SQLite schema and object-blob table
 │   └── cli.py                     # typer: create-user, list-users
-├── tests/                         # pytest + testcontainers
+├── tests/                         # pytest (SQLite-backed, no Docker required)
 │   ├── conftest.py
 │   ├── test_auth_*.py
 │   ├── test_files_*.py
@@ -194,7 +193,7 @@ User uploads file.docx via POST /knowledge-bases/{kb_id}/files
    │   4. INSERT files row (status=UPLOADED)              │
    │   5. Generate storage_key kb/{kb_id}/files/{file_id}/│
    │      original.{ext} (now that file_id exists)        │
-   │   6. PUT to MinIO                                    │
+   │   6. PUT to SQLite object storage                                    │
    │   7. ingest_file(session, row, data)  ← inline       │
    └──────────────────────────────────────────────────────┘
 
@@ -246,7 +245,7 @@ The ZIP magic check is loose by design — any zip file passes the validator, th
 
 ### Cleanup paths
 
-- `DELETE /knowledge-bases/{kb_id}/files/{file_id}` → soft-delete file row + `qdrant_store.delete_by_file()` removes vectors. MinIO object stays (cheap to keep, costly to recover if needed).
+- `DELETE /knowledge-bases/{kb_id}/files/{file_id}` → soft-delete file row + `qdrant_store.delete_by_file()` removes vectors. SQLite object blob stays (cheap to keep, costly to recover if needed).
 - `DELETE /knowledge-bases/{kb_id}` → cascading soft-delete: KB row + every file row + every file's vectors.
 - `POST /admin/rag-reindex` → drops the entire Qdrant collection and re-runs ingestion for every non-deleted file. Use after schema changes (e.g., when we added the sparse vector dimension).
 
@@ -463,7 +462,7 @@ GET  /slide-sessions/{id}/download     ← stream the .pptx blob
 ### Conversation flow
 
 ```
-turn 1  user: "5 slides about Postgres indexing for backend devs"
+turn 1  user: "5 slides about database indexing for backend devs"
         assistant: "What audience? What template? ..."
 
 turn 2  user: "junior devs, modern style, English"
@@ -508,7 +507,7 @@ POST /slide-sessions/{id}/render
      internal helper at this version.
   6. Read the resulting .pptx from the shared volume mount
      /presenton_data/<presentation_id>.pptx
-  7. PUT to local object storage at slide-sessions/{id}/latest.pptx (overwrites)
+  7. PUT to SQLite object storage at slide-sessions/{id}/latest.pptx (overwrites)
   8. Persist a [RENDERED:N seconds] marker message in the chat
      OR a [RENDER_FAILED:N seconds] message on Presenton failure
   9. Return both updated session + the new message; frontend appends
@@ -540,7 +539,7 @@ Visual templates: 4 ship with Presenton (`general` / `modern` / `standard` / `sw
 
 ### Health
 
-`GET /health` returns 200 immediately (liveness). `GET /ready` checks Postgres + local object storage (readiness). Used by docker compose healthchecks.
+`GET /health` returns 200 immediately (liveness). `GET /ready` reports that the backend process can serve requests after startup creates the SQLite metadata schema and object-blob table. Used by docker compose healthchecks.
 
 ### LLM info
 
@@ -611,7 +610,7 @@ All config lives in `.env`. Settings are loaded once at startup via Pydantic; ru
 | Reranker | `RERANK_BASE_URL`, `RERANK_MODEL` + `VLLM_RERANK_*` |
 | RAG knobs | `RAG_DENSE_TOP_K`, `RAG_FINAL_TOP_K`, `RAG_MIN_SCORE`, `RAG_RERANK_MIN_SCORE` |
 | Chunking | `CHUNK_CHARS`, `CHUNK_OVERLAP` |
-| Storage | `LOCAL_STORAGE_ROOT`, `STORAGE_BUCKET`, `MAX_UPLOAD_BYTES` |
+| Storage | `STORAGE_BUCKET`, `MAX_UPLOAD_BYTES` (object bytes live in `DATABASE_URL`) |
 | Vectors | `QDRANT_PATH` (or `QDRANT_URL`), `QDRANT_COLLECTION`, `EMBEDDING_DIM` |
 | Slide rendering | `PRESENTON_URL`, `PRESENTON_USERNAME`, `PRESENTON_PASSWORD`, `PRESENTON_DATA_ROOT` |
 | Database | `DATABASE_URL` |
@@ -626,7 +625,7 @@ docker compose --profile gpu up -d        # starts everything
 docker compose --profile gpu up --build   # rebuild after code changes
 ```
 
-The `gpu` profile gates the three vLLM services so devs without GPU can still iterate on Postgres / MinIO / backend / frontend (chat / RAG / render won't work, but the rest of the API does).
+The `gpu` profile gates the three vLLM services so devs without GPU can still iterate on SQLite-backed backend / frontend flows (chat / RAG / render won't work, but the rest of the API does).
 
 **First-run model downloads** (cached in the `hf_cache` volume):
 
@@ -644,26 +643,15 @@ The `gpu` profile gates the three vLLM services so devs without GPU can still it
 
 ## Test Strategy
 
-`backend/tests/` runs against real services using `testcontainers`:
-- Postgres for DB tests (real migrations, real ORM)
-- MinIO for object-store tests
-- Mocked HTTP for vLLM / Qdrant / Presenton (via `httpx_mock` or in-process FakeQdrant)
+`backend/tests/` runs against a temporary SQLite database. SQLAlchemy metadata tables and SQLite `object_blobs` storage are created in-process, so the main backend tests do not require Docker. External model/vector/render services are mocked or bypassed in focused tests.
 
 Tests are NOT shipped in the production backend image (Dockerfile only copies `app/`). Run them by:
 
 ```bash
-# From the host, requires the compose stack to be running
-docker run --rm \
-  --network knowledgedeck_default \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v $(pwd)/backend:/work \
-  -w /work \
-  --env-file .env \
-  knowledgedeck-backend \
-  sh -c "pip install -r requirements-dev.txt && python -m pytest -v"
+cd backend
+python -m pytest -v
 ```
 
-(The `docker.sock` mount is for testcontainers to spin up its own Postgres / MinIO containers; the existing compose Postgres is not used by tests.)
 
 **Frontend tests** are vitest + tsc:
 

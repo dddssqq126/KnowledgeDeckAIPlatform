@@ -1,6 +1,6 @@
 """End-to-end synchronous ingestion: parse → chunk → embed → write Qdrant.
 
-Called inline from the upload endpoint after the MinIO PUT succeeds. Synchronous
+Called inline from the upload endpoint after the SQLite object storage PUT succeeds. Synchronous
 processing keeps the MVP simple — no Redis/RQ/worker. The trade-off is that
 upload requests block for a few seconds while embeddings are computed.
 

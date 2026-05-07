@@ -32,7 +32,7 @@ def upgrade() -> None:
         sa.Column("use_rag", sa.Boolean, nullable=False, server_default=sa.text("false")),
         sa.Column("kb_ids", JSONB, nullable=True),
         # Plain-text outline for the MVP mock. When Presenton lands this turns
-        # into a download_key pointing at a generated PPTX in MinIO.
+        # into a download_key pointing at a generated PPTX in SQLite object storage.
         sa.Column("outline", sa.Text, nullable=False),
         sa.Column(
             "created_at",

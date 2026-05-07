@@ -54,7 +54,7 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("'outlining'"),
         ),
-        # MinIO object key for the most recently rendered PPTX. NULL until
+        # SQLite object key for the most recently rendered PPTX. NULL until
         # the first successful render.
         sa.Column("generated_pptx_key", sa.Text, nullable=True),
         sa.Column(

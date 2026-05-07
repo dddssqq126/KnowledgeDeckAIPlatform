@@ -2,7 +2,7 @@
 
 `POST /admin/rag-reindex` is destructive: it drops the Qdrant collection
 and reindexes every non-deleted KnowledgeFile from the bytes still in
-configured object storage (MinIO or local filesystem). Used to migrate
+configured SQLite object storage. Used to migrate
 existing data after a vector-pipeline change
 (e.g., adding sparse vectors for hybrid search).
 

@@ -42,7 +42,7 @@ The codebase is organized so each user-facing module is a self-contained subtree
 
 | You want… | Backend take | Frontend take | Notes |
 |---|---|---|---|
-| 🐳 **Just the Docker / infra stack** (services + glue, no app logic) | `docker-compose.yml`, `.env.example`, `backend/Dockerfile`, `frontend/Dockerfile` | — | SQLite + local storage + Qdrant + Presenton + 3 vLLM containers; the app pieces below plug into this |
+| 🐳 **Just the Docker / infra stack** (services + glue, no app logic) | `docker-compose.yml`, `.env.example`, `backend/Dockerfile`, `frontend/Dockerfile` | — | SQLite metadata + SQLite object blobs + Qdrant + Presenton + 3 vLLM containers; the app pieces below plug into this |
 | 🗂️ **KB ingest + RAG** (file upload → vector store, no chat UI) | `backend/app/shared/`, `backend/app/features/{rag,knowledge_bases}/`, `backend/app/db/` | `frontend/app/(protected)/knowledge-bases/`, `frontend/lib/{kb-store,knowledge-bases,api,auth-store}.ts`, `frontend/components/{DropUpload,AuthGuard,AppSidebar}.tsx` | The cleanest standalone feature; no upward deps on Chat or Slide |
 | 📚 **Just the RAG retrieval module** (as a library, against pre-existing data) | `backend/app/features/rag/` (services + admin reindex) + `backend/app/db/` (KnowledgeBase + KnowledgeFile models) | — | Treat `rag.retrieve_context(user_id, kb_ids, query)` as a black box |
 | 💬 **Chat** | KB + add `backend/app/features/chat/` | KB-frontend + `frontend/app/(protected)/page.tsx`, `frontend/lib/{chat-store,chat}.ts`, `components/ChatInput.tsx` | SSE streaming + multi-turn history + optional RAG |
@@ -71,14 +71,10 @@ For full architecture detail see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
    ┌────────────────────────────┼───────────┼──────────────────┐
    │                            │           │                  │
 ┌──▼──────┐   ┌─────────┐  ┌────▼────┐ ┌────▼────┐  ┌──────────▼──┐
-│ vLLM    │   │ vLLM    │  │ vLLM    │ │ Qdrant  │  │  MinIO       │
-│ chat    │   │ embed   │  │ rerank  │ │ vectors │  │  (originals  │
-│ Gemma   │   │ bge-m3  │  │ bge-r-v2│ │  hybrid │  │   + PPTX)    │
+│ vLLM    │   │ vLLM    │  │ vLLM    │ │ Qdrant  │  │  SQLite      │
+│ chat    │   │ embed   │  │ rerank  │ │ vectors │  │  metadata    │
+│ Gemma   │   │ bge-m3  │  │ bge-r-v2│ │  hybrid │  │  + blobs     │
 └─────────┘   └─────────┘  └─────────┘ └─────────┘  └──────────────┘
-                                                ┌──────────────┐
-                                                │  Postgres    │
-                                                │  (metadata)  │
-                                                └──────────────┘
                                                 ┌──────────────┐
                                                 │  Presenton   │
                                                 │  (PPTX gen)  │
@@ -226,7 +222,7 @@ For the full pipeline implementation see [docs/ARCHITECTURE.md § RAG](docs/ARCH
 | Sparse | dependency-light BM25-style hashing + Qdrant IDF (in-process) |
 | Reranker | vLLM `--runner pooling --convert classify` serving BAAI/bge-reranker-v2-m3 |
 | Vectors | Qdrant 1.12+ with named vectors + RRF fusion |
-| Object store | Local filesystem (`LOCAL_STORAGE_ROOT` + `STORAGE_BUCKET`) |
+| Object store | SQLite object blobs (`STORAGE_BUCKET` namespace) in the configured SQLite database |
 | Database | SQLite |
 | Slide rendering | Presenton (`ghcr.io/presenton/presenton`) |
 
@@ -249,7 +245,7 @@ Open `.env` and at minimum set:
 - `INITIAL_USER_PASSWORD=<choose-one>`
 - `CORS_ORIGINS=http://localhost:3000` (or `http://<your-host>:3000` if accessing remotely)
 
-Defaults work for everything else (Qdrant / object-storage / vLLM / Presenton credentials are local-only).
+Defaults work for everything else (Qdrant / SQLite object-storage / vLLM / Presenton credentials are local-only).
 
 ### 2. Bring up the stack
 
@@ -304,7 +300,7 @@ docker compose --profile gpu down
 Other useful variants:
 
 ```bash
-# Same, plus delete all volumes (Postgres / object storage / Qdrant / Presenton
+# Same, plus delete all volumes (SQLite metadata + object blobs / Qdrant / Presenton
 # data + the Hugging Face model cache). Destructive — only run if you
 # really want a clean slate.
 docker compose --profile gpu down -v
@@ -355,7 +351,7 @@ All three vLLM services default to `GPU_DEVICE=0` (single-GPU mode). To split ac
 
 ### Other services
 
-`LOCAL_STORAGE_ROOT`, `STORAGE_BUCKET`, `QDRANT_PATH`, `PRESENTON_*`, and `DATABASE_URL` all have local defaults that work out of the box.
+`DATABASE_URL`, `STORAGE_BUCKET`, `QDRANT_PATH`, and `PRESENTON_*` all have local defaults that work out of the box.
 
 ---
 
@@ -418,14 +414,14 @@ Accepted file formats: **txt, pdf, cs, md, docx, pptx**. 50 MB cap. Format is va
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/admin/rag-reindex` | Drops the Qdrant collection and re-ingests every non-deleted file from MinIO. Used after RAG-pipeline changes (e.g., schema migrations). Returns `{reindexed, failed, skipped, failed_files[]}`. **Destructive — requires login.** |
+| `POST` | `/admin/rag-reindex` | Drops the Qdrant collection and re-ingests every non-deleted file from SQLite object storage. Used after RAG-pipeline changes (e.g., schema migrations). Returns `{reindexed, failed, skipped, failed_files[]}`. **Destructive — requires login.** |
 
 ### Health
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/health` | Liveness. |
-| `GET` | `/ready` | Readiness — checks DB + storage. |
+| `GET` | `/ready` | Readiness — backend process can serve requests after startup initialization. |
 
 ---
 
@@ -447,7 +443,7 @@ backend/
       chat/                  ← chat sessions + SSE stream + rewriter
       slides/                ← slide planner + Presenton render
     main.py
-  tests/                     ← pytest + testcontainers
+  tests/                     ← pytest (SQLite-backed, no Docker required)
   requirements.txt
 
 frontend/
@@ -460,7 +456,7 @@ frontend/
 docs/
   ARCHITECTURE.md            ← Full system design + per-feature deep-dive
   API.md                     ← Endpoint reference + curl recipes
-docker-compose.yml           ← All services (sqlite in backend, qdrant, local storage volume, vllm × 3, presenton, backend, frontend)
+docker-compose.yml           ← All services (SQLite metadata/object blobs, Qdrant, vLLM × 3, Presenton, backend, frontend)
 .env.example                 ← Documented config template
 ```
 
@@ -468,7 +464,7 @@ For full layout including service deps and design decisions, see [docs/ARCHITECT
 
 ### Running Tests
 
-Backend (uses testcontainers for real Postgres + MinIO):
+Backend (SQLite metadata + SQLite object blobs; Docker is not required):
 
 ```bash
 cd backend

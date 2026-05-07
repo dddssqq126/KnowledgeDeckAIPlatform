@@ -51,10 +51,8 @@ def test_settings_accept_initial_user_overrides() -> None:
 def test_settings_expose_storage_fields(monkeypatch) -> None:
     from app.core.config import Settings
 
-    monkeypatch.setenv("LOCAL_STORAGE_ROOT", "/tmp/kd-storage")
     monkeypatch.setenv("STORAGE_BUCKET", "kd-test")
     s = Settings()
-    assert s.local_storage_root == "/tmp/kd-storage"
     assert s.storage_bucket == "kd-test"
     assert s.max_upload_bytes == 52_428_800
 

@@ -11,7 +11,7 @@ custom_template_id pointing at a Presenton-authored visual template (built
 via Presenton's /custom-template UI; we proxy /api/v1/ppt/template/all to
 let the user pick).
 
-Migration discards the previous PPTX bytes — they're orphaned in MinIO; a
+Migration discards the previous PPTX bytes — they're orphaned in SQLite object storage; a
 future cleanup job can remove them. The slide-sessions feature is freshly
 built so production data loss is not a concern.
 """

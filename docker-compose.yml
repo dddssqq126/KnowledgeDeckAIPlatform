@@ -21,8 +21,8 @@ services:
     volumes:
       # Read PPTX artifacts that Presenton wrote without proxying via HTTP.
       - presenton_data:/presenton_data:ro
-      # Local filesystem object storage mount.
-      - local_storage_data:/var/lib/knowledgedeck-storage
+      # Persist SQLite metadata/object blobs and embedded Qdrant data.
+      - app_data:/data
     depends_on:
       qdrant:
         condition: service_started
@@ -167,7 +167,7 @@ services:
 volumes:
   qdrant_data:
   presenton_data:
-  local_storage_data:
+  app_data:
   hf_cache:
 
 # Override the auto-created "<project>_default" network with an explicit

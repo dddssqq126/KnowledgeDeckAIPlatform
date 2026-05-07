@@ -43,7 +43,7 @@ python main.py
 
 `main.py` is a non-interactive scenario that drives every layer of the
 stack. Use it after a fresh deploy to verify all five services
-(Postgres is unused here, but Qdrant + vLLM chat + vLLM embed + vLLM
+(SQLite storage is unused here, but Qdrant + vLLM chat + vLLM embed + vLLM
 rerank + Presenton are all touched) actually wire up correctly.
 
 What it does:
@@ -130,7 +130,7 @@ export PRESENTON_URL=http://localhost:5001
   for parallel embed). Demos are sync `httpx.Client` because they're
   CLI scripts and clarity wins over throughput.
 - **No persistence between runs.** Chat / slide history lives in
-  Python lists, not Postgres. `:reset` or `:exit` and it's gone.
+  Python lists, not SQLite. `:reset` or `:exit` and it's gone.
 - **No multi-user isolation.** Everything writes under `DEMO_USER_ID=999`.
   Use `cleanup_demo_vectors()` (or `01_kb_ingest.py --cleanup-first`)
   to wipe between iterations.

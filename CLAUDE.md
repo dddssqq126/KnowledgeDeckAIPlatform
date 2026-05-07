@@ -20,7 +20,7 @@ Project conventions for KnowledgeDeck AI Platform contributors (human or AI). Re
 | `shared/api/` | Cross-feature platform routes: `auth`, `deps`, `health`, `llm_info` |
 | `shared/services/` | Cross-feature services: `auth_service` |
 | `features/rag/` | Hybrid retrieval + reranker + reindex endpoint (shared by KB, chat, slides) |
-| `features/knowledge_bases/` | KB CRUD + file upload + MinIO wrapper |
+| `features/knowledge_bases/` | KB CRUD + file upload + SQLite object storage |
 | `features/chat/` | Chat sessions + SSE stream + multi-turn rewriter |
 | `features/slides/` | Slide-planner + Presenton render |
 
