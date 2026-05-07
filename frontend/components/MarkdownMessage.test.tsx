@@ -45,6 +45,30 @@ describe("MarkdownMessage", () => {
     expect(xml).toContain("A&amp;B");
     expect(xml).toContain("&lt;1&gt;");
   });
+
+  it("uses highlighted code cards for explicit fenced code", () => {
+    render(
+      <MarkdownMessage content={"```ts\nconst answer: number = 42;\n```"} />,
+    );
+
+    expect(screen.getByText("ts")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy code" })).toBeInTheDocument();
+    expect(screen.getByText("const")).toBeInTheDocument();
+    expect(screen.getByText("42")).toBeInTheDocument();
+  });
+
+  it("renders prose-like unlabeled fences as wrapped plain text", () => {
+    render(
+      <MarkdownMessage
+        content={"```\nThis is a normal note that should not look like source code.\n```"}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Copy code" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText("This is a normal note that should not look like source code."),
+    ).toHaveClass("whitespace-pre-wrap");
+  });
 });
 
 function blobToText(blob: Blob): Promise<string> {

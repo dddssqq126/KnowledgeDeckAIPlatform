@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from typing import Any
@@ -21,7 +22,7 @@ from sqlalchemy.orm import selectinload
 
 from app.shared.api.deps import get_current_user
 from app.db.base import async_session_factory, get_db
-from app.db.models import ChatMessage, ChatRole, ChatSession, User
+from app.db.models import ChatMessage, ChatRole, ChatSession, ChatSessionShare, User
 from app.features.chat.services import chat_service
 from app.features.rag.services import rag
 
@@ -54,6 +55,11 @@ class MessageOut(BaseModel):
 
 class SessionDetail(SessionOut):
     messages: list[MessageOut]
+
+
+class ShareOut(BaseModel):
+    token: str
+    url_path: str
 
 
 class StreamRequest(BaseModel):
@@ -136,6 +142,60 @@ async def get_session(
     s = await _load_owned_session(
         session, owner_user_id=user.id, session_id=session_id, with_messages=True
     )
+    return SessionDetail(
+        id=s.id,
+        title=s.title,
+        created_at=s.created_at.isoformat(),
+        updated_at=s.updated_at.isoformat(),
+        messages=[_message_out(m) for m in s.messages],
+    )
+
+
+@router.post("/sessions/{session_id}/share", response_model=ShareOut)
+async def share_session(
+    session_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> ShareOut:
+    s = await _load_owned_session(session, owner_user_id=user.id, session_id=session_id)
+    existing = await session.scalar(
+        select(ChatSessionShare).where(
+            ChatSessionShare.session_id == s.id,
+            ChatSessionShare.revoked_at.is_(None),
+        )
+    )
+    if existing is None:
+        existing = ChatSessionShare(
+            session_id=s.id,
+            owner_user_id=user.id,
+            token=secrets.token_urlsafe(24),
+        )
+        session.add(existing)
+        await session.commit()
+        await session.refresh(existing)
+    return ShareOut(token=existing.token, url_path=f"/shared-chat/{existing.token}")
+
+
+@router.get("/shares/{token}", response_model=SessionDetail)
+async def get_shared_session(
+    token: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> SessionDetail:
+    share = await session.scalar(
+        select(ChatSessionShare)
+        .where(
+            ChatSessionShare.token == token,
+            ChatSessionShare.revoked_at.is_(None),
+        )
+        .options(
+            selectinload(ChatSessionShare.session).selectinload(ChatSession.messages)
+        )
+    )
+    if share is None or share.session is None or share.session.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="share_not_found")
+
+    s = share.session
     return SessionDetail(
         id=s.id,
         title=s.title,

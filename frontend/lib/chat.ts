@@ -2,7 +2,7 @@
 
 import { api } from "./api";
 import { resolveExternalUsername, useAuthStore } from "./auth-store";
-import { mockAppendChatTurn } from "./mock-data";
+import { mockAppendChatTurn, mockGetSharedSession, mockShareSession } from "./mock-data";
 import { isMockDataMode } from "./mock-mode";
 
 export type Citation = { file_id: number; filename: string };
@@ -24,6 +24,11 @@ export type ChatMessage = {
 
 export type SessionDetail = ChatSession & { messages: ChatMessage[] };
 
+export type ChatShare = {
+  token: string;
+  url_path: string;
+};
+
 export type ChatSearchResult = {
   session_id: number;
   session_title: string;
@@ -44,6 +49,18 @@ export async function listSessions(): Promise<ChatSession[]> {
 
 export async function getSession(id: number): Promise<SessionDetail> {
   const res = await api.get<SessionDetail>(`/chat/sessions/${id}`);
+  return res.data;
+}
+
+export async function shareChatSession(id: number): Promise<ChatShare> {
+  if (isMockDataMode()) return mockShareSession(id);
+  const res = await api.post<ChatShare>(`/chat/sessions/${id}/share`);
+  return res.data;
+}
+
+export async function getSharedChat(token: string): Promise<SessionDetail> {
+  if (isMockDataMode()) return mockGetSharedSession(token);
+  const res = await api.get<SessionDetail>(`/chat/shares/${encodeURIComponent(token)}`);
   return res.data;
 }
 

@@ -17,22 +17,29 @@ body {
 
 /* Minimal markdown styling for assistant message bubbles. Tailored to small
    inline rendering — no @tailwindcss/typography needed. */
+.markdown-body {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .markdown-body > :first-child { margin-top: 0; }
 .markdown-body > :last-child { margin-bottom: 0; }
-.markdown-body p { margin: 0.4em 0; }
+.markdown-body p { margin: 0.4em 0; max-width: 100%; }
 .markdown-body h1 { font-size: 1.05rem; font-weight: 600; margin: 0.8em 0 0.4em; }
 .markdown-body h2 { font-size: 1rem;    font-weight: 600; margin: 0.7em 0 0.4em; }
 .markdown-body h3 { font-size: 0.95rem; font-weight: 600; margin: 0.6em 0 0.3em; }
 .markdown-body ul { list-style: disc;    padding-left: 1.25rem; margin: 0.4em 0; }
 .markdown-body ol { list-style: decimal; padding-left: 1.25rem; margin: 0.4em 0; }
-.markdown-body li { margin: 0.15em 0; }
+.markdown-body li { margin: 0.15em 0; overflow-wrap: anywhere; }
 .markdown-body code {
   background: hsl(var(--muted));
   padding: 0.1em 0.3em;
   border-radius: 0.25rem;
   font-size: 0.85em;
+  overflow-wrap: anywhere;
 }
 .markdown-body pre {
+  max-width: 100%;
   background: hsl(var(--muted));
   padding: 0.6rem 0.75rem;
   border-radius: 0.4rem;
@@ -51,14 +58,23 @@ body {
   padding-left: 0.75rem;
   color: hsl(var(--muted-foreground));
   margin: 0.5em 0;
+  overflow-wrap: anywhere;
 }
 .markdown-body table {
   border-collapse: collapse;
   margin: 0.5em 0;
   font-size: 0.85em;
+  max-width: 100%;
 }
 .markdown-body th, .markdown-body td {
   border: 1px solid hsl(var(--border));
   padding: 0.25rem 0.5rem;
+  overflow-wrap: anywhere;
 }
 .markdown-body th { background: hsl(var(--muted)); font-weight: 600; }
+.chat-code-token {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  overflow-wrap: normal !important;
+}

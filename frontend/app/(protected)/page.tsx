@@ -11,6 +11,7 @@ import {
   type ChatMessage,
   type Citation,
   getSession,
+  shareChatSession,
   streamChat,
 } from "../../lib/chat";
 import { useChatSessionsStore } from "../../lib/chat-store";
@@ -36,12 +37,32 @@ export default function ChatPage() {
   const [streamingCitations, setStreamingCitations] = useState<Citation[] | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
 
   const knowledgeBases = useKbStore((s) => s.kbs);
   const kbsLoaded = useKbStore((s) => s.loaded);
   const refreshKbs = useKbStore((s) => s.refresh);
   const llmInfo = useLlmInfo();
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const shouldStickToBottomRef = useRef(true);
+  const scrollFrameRef = useRef<number | null>(null);
+
+  const scrollToBottom = useCallback((force = false) => {
+    if (!force && !shouldStickToBottomRef.current) return;
+    if (scrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollFrameRef.current);
+    }
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      const target = messagesEndRef.current;
+      if (target && typeof target.scrollIntoView === "function") {
+        target.scrollIntoView({ behavior: "auto", block: "end" });
+      } else if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+      }
+      scrollFrameRef.current = null;
+    });
+  }, []);
 
   useEffect(() => {
     if (!kbsLoaded) refreshKbs();
@@ -74,8 +95,21 @@ export default function ChatPage() {
   }, [activeId]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingText, isStreaming]);
+    shouldStickToBottomRef.current = true;
+    scrollToBottom(true);
+  }, [activeId, scrollToBottom]);
+
+  useEffect(() => {
+    scrollToBottom(false);
+  }, [messages, streamingText, isStreaming, scrollToBottom]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+      }
+    };
+  }, []);
 
   const activeSessionTitle = activeId
     ? sessions.find((s) => s.id === activeId)?.title ?? "Chat"
@@ -142,6 +176,26 @@ export default function ChatPage() {
     [activeId, newChat, refresh, router, bumpUpdatedAt],
   );
 
+  const handleShareChat = useCallback(async () => {
+    if (activeId == null) return;
+    try {
+      const share = await shareChatSession(activeId);
+      const url = new URL(share.url_path, window.location.origin).toString();
+      await copyText(url);
+      setShareCopied(true);
+      window.setTimeout(() => setShareCopied(false), 1500);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Failed to share chat");
+    }
+  }, [activeId]);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    shouldStickToBottomRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+  }, []);
+
   return (
     <section className="flex h-full flex-col bg-background">
       <header className="flex h-16 items-center justify-between border-b border-border bg-card/90 px-6 backdrop-blur">
@@ -152,6 +206,15 @@ export default function ChatPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void handleShareChat()}
+            disabled={activeId == null || messages.length === 0}
+            className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Share2 className="h-4 w-4" />
+            {shareCopied ? "Copied" : "Share"}
+          </button>
           <button
             type="button"
             onClick={() =>
@@ -169,7 +232,11 @@ export default function ChatPage() {
         </div>
       </header>
 
-      <div className="nice-scrollbar flex-1 overflow-auto px-6 py-7">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="nice-scrollbar flex-1 overflow-auto px-6 py-7"
+      >
         <div className="mx-auto max-w-4xl space-y-7">
           {messages.length === 0 && !isStreaming ? (
             <div className="py-16 text-center">
@@ -240,14 +307,14 @@ function MessageBubble({
     <div className={`flex items-start gap-4 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
       <Avatar isUser={isUser} />
       <div
-        className={`flex max-w-[88%] flex-col gap-1 ${
+        className={`flex min-w-0 max-w-[88%] flex-col gap-1 ${
           isUser ? "items-end" : "items-start"
         }`}
       >
         <div
-          className={`px-5 py-4 text-base leading-7 ${
+          className={`min-w-0 max-w-full px-5 py-4 text-base leading-7 ${
             isUser
-              ? "whitespace-pre-wrap rounded-2xl bg-foreground text-background shadow-sm"
+              ? "whitespace-pre-wrap rounded-2xl bg-foreground text-background shadow-sm [overflow-wrap:anywhere]"
               : "text-foreground"
           }`}
         >
@@ -257,7 +324,7 @@ function MessageBubble({
               {streaming ? <span className="ml-1 animate-pulse">...</span> : null}
             </>
           ) : (
-            <div>
+            <div className="min-w-0 max-w-full">
               <MarkdownMessage content={message.content || (streaming ? "Thinking..." : "")} />
               {streaming ? <span className="ml-1 animate-pulse">...</span> : null}
             </div>
@@ -381,4 +448,23 @@ function formatTimestamp(iso: string): string {
   });
   if (sameDay) return time;
   return `${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${time}`;
+}
+
+async function copyText(value: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(value);
+    return;
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand("copy");
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  }
 }

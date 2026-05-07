@@ -103,6 +103,8 @@ let chatMessages: Record<number, ChatMessage[]> = {
   3: [],
 };
 
+let chatShareTokens: Record<string, number> = {};
+
 let slideSessions: SlideSession[] = [
   slideSession(1, "KnowledgeDeck investor walkthrough", "rendered", true, iso(1200), iso(65)),
   slideSession(2, "RAG quality review", "outlining", false, iso(680), iso(500)),
@@ -402,6 +404,24 @@ export function mockUpdateSession(id: number, title: string): ChatSession {
 export function mockDeleteSession(id: number): void {
   chatSessions = chatSessions.filter((session) => session.id !== id);
   delete chatMessages[id];
+  chatShareTokens = Object.fromEntries(
+    Object.entries(chatShareTokens).filter(([, sessionId]) => sessionId !== id),
+  );
+}
+
+export function mockShareSession(id: number): { token: string; url_path: string } {
+  const session = chatSessions.find((item) => item.id === id);
+  if (!session) throw new Error("Chat session not found");
+  const existing = Object.entries(chatShareTokens).find(([, sessionId]) => sessionId === id);
+  const token = existing?.[0] ?? `mock-share-${id}`;
+  chatShareTokens[token] = id;
+  return { token, url_path: `/shared-chat/${token}` };
+}
+
+export function mockGetSharedSession(token: string): SessionDetail {
+  const sessionId = chatShareTokens[token];
+  if (!sessionId) throw new Error("Shared chat not found");
+  return mockGetSession(sessionId);
 }
 
 export function mockAppendChatTurn(

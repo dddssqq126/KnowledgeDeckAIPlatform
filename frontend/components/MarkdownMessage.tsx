@@ -3,16 +3,42 @@
 import { Check, Copy, Download } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
+import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/light";
+import bash from "react-syntax-highlighter/dist/esm/languages/hljs/bash";
+import css from "react-syntax-highlighter/dist/esm/languages/hljs/css";
+import javascript from "react-syntax-highlighter/dist/esm/languages/hljs/javascript";
+import json from "react-syntax-highlighter/dist/esm/languages/hljs/json";
+import markdown from "react-syntax-highlighter/dist/esm/languages/hljs/markdown";
+import python from "react-syntax-highlighter/dist/esm/languages/hljs/python";
+import sql from "react-syntax-highlighter/dist/esm/languages/hljs/sql";
+import typescript from "react-syntax-highlighter/dist/esm/languages/hljs/typescript";
+import xml from "react-syntax-highlighter/dist/esm/languages/hljs/xml";
+import { vs2015 } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import remarkGfm from "remark-gfm";
 
 import { downloadBlob } from "../lib/download";
+
+SyntaxHighlighter.registerLanguage("bash", bash);
+SyntaxHighlighter.registerLanguage("css", css);
+SyntaxHighlighter.registerLanguage("javascript", javascript);
+SyntaxHighlighter.registerLanguage("js", javascript);
+SyntaxHighlighter.registerLanguage("json", json);
+SyntaxHighlighter.registerLanguage("markdown", markdown);
+SyntaxHighlighter.registerLanguage("md", markdown);
+SyntaxHighlighter.registerLanguage("python", python);
+SyntaxHighlighter.registerLanguage("py", python);
+SyntaxHighlighter.registerLanguage("sql", sql);
+SyntaxHighlighter.registerLanguage("typescript", typescript);
+SyntaxHighlighter.registerLanguage("ts", typescript);
+SyntaxHighlighter.registerLanguage("xml", xml);
+SyntaxHighlighter.registerLanguage("html", xml);
 
 export function MarkdownMessage({ content }: { content: string }) {
   return (
     <div className="markdown-body">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        components={{ code: CodeBlock, table: TableBlock }}
+        components={{ code: CodeBlock, pre: PreBlock, table: TableBlock }}
       >
         {content}
       </ReactMarkdown>
@@ -33,19 +59,62 @@ function CodeBlock(props: any) {
     );
   }
 
+  if (!language && !looksLikeCode(text)) {
+    return (
+      <div className="my-3 max-w-full whitespace-pre-wrap rounded-lg border border-border bg-muted/50 px-4 py-3 text-sm leading-6 text-foreground [overflow-wrap:anywhere]">
+        {text}
+      </div>
+    );
+  }
+
   return (
-    <div className="my-4 overflow-hidden rounded-xl border border-border bg-slate-950 text-slate-100 shadow-sm">
+    <div className="my-4 max-w-full overflow-hidden rounded-xl border border-[#3c3c3c] bg-[#1e1e1e] text-[#d4d4d4] shadow-sm">
       <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5 text-sm text-slate-300">
         <span>{language ?? "code"}</span>
         <CopyButton text={text} label="Copy code" />
       </div>
-      <pre className="chat-code-pre overflow-x-auto p-4 text-sm leading-6">
-        <code className={className} {...rest}>
-          {children}
-        </code>
-      </pre>
+      <SyntaxHighlighter
+        language={language ?? "text"}
+        style={vs2015}
+        PreTag="div"
+        customStyle={{
+          margin: 0,
+          padding: "1rem",
+          background: "#1e1e1e",
+          overflowX: "auto",
+          fontSize: "0.875rem",
+          lineHeight: "1.5rem",
+        }}
+        codeTagProps={{ className: "chat-code-token" }}
+        {...rest}
+      >
+        {text}
+      </SyntaxHighlighter>
     </div>
   );
+}
+
+function PreBlock({ children }: { children?: ReactNode }) {
+  return <>{children}</>;
+}
+
+function looksLikeCode(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (/^(\$|>|PS\s+[A-Z]:\\|[A-Z]:\\.*>)/m.test(trimmed)) return true;
+  if (/[{};]|=>|<\/?[a-z][\s\S]*>/i.test(trimmed)) return true;
+  if (
+    /^\s*(import|from|export|const|let|var|function|class|def|return|if|for|while|try|catch|SELECT|INSERT|UPDATE|DELETE|CREATE|npm|pnpm|yarn|git|docker|python|pip|curl)\b/im.test(
+      trimmed,
+    )
+  ) {
+    return true;
+  }
+
+  const codeishLines = trimmed
+    .split("\n")
+    .filter((line) => /^\s{2,}\S/.test(line) && /[()[\]{}=<>:]/.test(line));
+  return codeishLines.length >= 2;
 }
 
 function TableBlock({ children }: { children?: ReactNode }) {
