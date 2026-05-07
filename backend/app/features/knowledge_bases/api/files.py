@@ -20,7 +20,7 @@ from app.db.base import get_db
 from app.db.models import FileStatus, KnowledgeBase, KnowledgeFile, User
 from app.features.knowledge_bases.services import file_service
 from app.features.rag.services import ingestion
-from app.features.knowledge_bases.services.object_storage import get_minio_client
+from app.features.knowledge_bases.services.object_storage import get_storage_client
 
 router = APIRouter(prefix="/knowledge-bases", tags=["files"])
 
@@ -158,7 +158,7 @@ async def upload_file(
     row.storage_key = f"kb/{kb.id}/files/{row.id}/original.{extension}"
 
     try:
-        await get_minio_client().put_object(
+        await get_storage_client().put_object(
             row.storage_key,
             io.BytesIO(data),
             size,
@@ -217,7 +217,7 @@ async def download_file(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="file_not_found")
 
     try:
-        data = await get_minio_client().get_object(row.storage_key)
+        data = await get_storage_client().get_object(row.storage_key)
     except Exception:
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, detail="storage_error"
