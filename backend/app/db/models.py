@@ -8,6 +8,7 @@ from sqlalchemy import (
     Enum as SAEnum,
     ForeignKey,
     Index,
+    LargeBinary,
     Text,
     func,
 )
@@ -16,6 +17,30 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 ID_TYPE = sa.BigInteger().with_variant(sa.Integer(), "sqlite")
+
+
+class StoredObject(Base):
+    __tablename__ = "stored_objects"
+
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
+    bucket: Mapped[str] = mapped_column(Text, nullable=False)
+    key: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    size_bytes: Mapped[int] = mapped_column(ID_TYPE, nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        Index("uq_stored_objects_bucket_key", "bucket", "key", unique=True),
+    )
 
 
 class User(Base):
