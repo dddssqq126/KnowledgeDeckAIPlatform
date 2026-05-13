@@ -70,6 +70,79 @@ class StreamRequest(BaseModel):
     kb_ids: list[int] | None = None
 
 
+def _detect_code_assist_intent(message: str) -> str | None:
+    """Return a short intent label when the request looks code-related."""
+    text = message.lower()
+    code_markers = (
+        "```",
+        "`",
+        ".py",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        "function",
+        "class",
+        "method",
+        "api endpoint",
+        "stack trace",
+        "traceback",
+        "exception",
+        "程式碼",
+        "代码",
+        "函式",
+        "函数",
+        "類別",
+        "类",
+    )
+    code_actions = (
+        "explain",
+        "review",
+        "fix",
+        "debug",
+        "refactor",
+        "implement",
+        "modify",
+        "change",
+        "update",
+        "write",
+        "generate",
+        "test",
+        "說明",
+        "解释",
+        "修復",
+        "修复",
+        "除錯",
+        "调试",
+        "重構",
+        "重构",
+        "實作",
+        "实现",
+        "修改",
+        "更新",
+        "撰寫",
+        "生成",
+        "測試",
+        "测试",
+    )
+    if not any(marker in text for marker in code_markers):
+        return None
+    if "debug" in text or "traceback" in text or "exception" in text or "除錯" in text:
+        return "debug or fix code"
+    if "refactor" in text or "重構" in text or "重构" in text:
+        return "refactor code"
+    if any(
+        action in text
+        for action in ("implement", "write", "generate", "實作", "实现", "撰寫", "生成")
+    ):
+        return "implement code"
+    if any(action in text for action in ("review", "explain", "說明", "解释")):
+        return "explain or review code"
+    if any(action in text for action in code_actions):
+        return "modify code"
+    return "general code assistance"
+
+
 def _session_out(s: ChatSession) -> SessionOut:
     return SessionOut(
         id=s.id,
@@ -275,7 +348,17 @@ async def stream_chat(
         try:
             citations: list[dict[str, Any]] = []
             context = ""
+            rag_query: str | None = None
+            code_assist_intent: str | None = None
             if use_rag:
+                # Multi-turn follow-ups ("and Python?", "what about that one?")
+                # are not standalone — embedding them directly drags retrieval
+                # off-topic. Rewriter resolves references against history into
+                # a self-contained query before we hit the vector store.
+                rag_query = await chat_service.rewrite_for_retrieval(
+                    history=history, user_message=user_message
+                )
+                code_assist_intent = _detect_code_assist_intent(user_message)
                 code_intent = chat_service.detect_code_assist_intent(user_message)
                 if code_intent is not None:
                     # Code queries must keep identifiers, import paths, and
@@ -299,7 +382,11 @@ async def stream_chat(
 
             collected: list[str] = []
             async for token in chat_service.stream_answer(
-                history=history, user_message=user_message, context=context
+                history=history,
+                user_message=user_message,
+                context=context,
+                rag_query=rag_query,
+                code_assist_intent=code_assist_intent,
             ):
                 collected.append(token)
                 yield _sse("token", {"text": token})

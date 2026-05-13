@@ -414,12 +414,28 @@ async def stream_answer(
     history: list[ChatMessage],
     user_message: str,
     context: str,
+    rag_query: str | None = None,
+    code_assist_intent: str | None = None,
 ) -> AsyncIterator[str]:
     """Yields LLM token chunks as plain strings."""
     messages: list[Any] = [SystemMessage(content=SYSTEM_PROMPT)]
     messages.extend(_history_to_messages(history))
     if context:
         messages.append(SystemMessage(content=f"Context:\n{context}"))
+    if rag_query:
+        messages.append(
+            SystemMessage(content=f"Retrieval query used to select context: {rag_query}")
+        )
+    if code_assist_intent:
+        messages.append(
+            SystemMessage(
+                content=(
+                    "This is a code-assistance request: "
+                    f"{code_assist_intent}. Map the user's request to "
+                    "retrieved code context before answering."
+                )
+            )
+        )
     messages.append(HumanMessage(content=user_message))
 
     llm = _build_llm()
