@@ -6,11 +6,15 @@ maker. This module contains:
   - `rewrite_for_retrieval` — chat-specific follow-up rewriter, used so
     multi-turn pronouns ("and Python?", "what about that one?") embed
     against a self-contained query rather than the literal user message
+  - `detect_code_assist_intent` / `rewrite_for_code_retrieval` — deterministic
+    code-aware retrieval query helpers that preserve identifiers and errors
   - `stream_answer` — token-streaming reply assembly
 """
+
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -38,6 +42,114 @@ SYSTEM_PROMPT = (
 # 20 = up to ~10 user/assistant pairs. Conversational chat tends to have
 # short turns, so this is plenty before older turns fall off the window.
 HISTORY_MAX_MESSAGES = 20
+
+
+CODE_INTENT_UNIT_TEST = "unit_test"
+CODE_INTENT_DEBUG = "debug"
+CODE_INTENT_IMPLEMENTATION = "implementation"
+CODE_INTENT_SNIPPET = "code_snippet"
+
+_CODE_INTENT_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        CODE_INTENT_UNIT_TEST,
+        ("unit test", "pytest", "unittest", "test case", "測試", "單元測試"),
+    ),
+    (
+        CODE_INTENT_DEBUG,
+        (
+            "debug",
+            "bug",
+            "error",
+            "exception",
+            "traceback",
+            "stack trace",
+            "除錯",
+            "錯誤",
+        ),
+    ),
+    (
+        CODE_INTENT_IMPLEMENTATION,
+        ("write function", "implement", "refactor", "寫函式", "實作"),
+    ),
+)
+
+_CODE_SNIPPET_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"```"),
+    re.compile(r"\bdef\s+"),
+    re.compile(r"\bclass\s+"),
+    re.compile(r"\bfunction\s+"),
+    re.compile(r"^\s*import\s+[A-Za-z_][\w.]*", re.MULTILINE),
+    re.compile(r"^\s*from\s+[A-Za-z_][\w.]*\s+import\s+", re.MULTILINE),
+    re.compile(r"\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=?"),
+)
+
+_CODE_RETRIEVAL_TARGETS = {
+    CODE_INTENT_UNIT_TEST: (
+        "Find related function definitions, signatures, usages, expected behavior, "
+        "and existing tests for writing unit tests."
+    ),
+    CODE_INTENT_DEBUG: (
+        "Find related implementation, call sites, error handling, and variables "
+        "connected to this error."
+    ),
+    CODE_INTENT_IMPLEMENTATION: (
+        "Find existing reusable library functions, classes, APIs, signatures, "
+        "examples, and patterns."
+    ),
+    CODE_INTENT_SNIPPET: (
+        "Find related implementation, function definitions, class definitions, "
+        "signatures, usages, imports, examples, and patterns."
+    ),
+}
+
+
+def detect_code_assist_intent(user_message: str) -> str | None:
+    """Return the code-assistance intent detected in a user message, if any."""
+    normalized = user_message.casefold()
+    for intent, keywords in _CODE_INTENT_KEYWORDS:
+        if any(keyword.casefold() in normalized for keyword in keywords):
+            return intent
+
+    if any(pattern.search(user_message) for pattern in _CODE_SNIPPET_PATTERNS):
+        return CODE_INTENT_SNIPPET
+
+    return None
+
+
+def rewrite_for_code_retrieval(
+    history: list[ChatMessage], user_message: str, intent: str
+) -> str:
+    """Build a code-aware retrieval query while preserving exact identifiers.
+
+    This rewrite is deterministic on purpose: code retrieval quality depends on
+    exact function names, class names, variable names, error text, and import
+    paths surviving unchanged. The raw user message is therefore embedded
+    verbatim and augmented only with code-search target terms.
+    """
+    target = _CODE_RETRIEVAL_TARGETS.get(
+        intent, _CODE_RETRIEVAL_TARGETS[CODE_INTENT_SNIPPET]
+    )
+    parts = [
+        target,
+        "Preserve exact function names, class names, variable names, error "
+        "messages, and import paths from the request.",
+    ]
+
+    if history:
+        recent_user_turns = [
+            m.content.strip()
+            for m in history[-6:]
+            if m.role is ChatRole.USER and m.content.strip()
+        ]
+        if recent_user_turns:
+            recent_context = " | ".join(
+                turn if len(turn) <= 240 else turn[:240] + "..."
+                for turn in recent_user_turns[-2:]
+            )
+            parts.append(f"Recent user context: {recent_context}")
+
+    parts.append(f"User request: {user_message}")
+    return "\n".join(parts)
 
 
 _REWRITE_SYSTEM = (
@@ -75,9 +187,7 @@ _REWRITE_SYSTEM = (
 )
 
 
-async def rewrite_for_retrieval(
-    history: list[ChatMessage], user_message: str
-) -> str:
+async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -> str:
     """Rewrite the user's question into a standalone, abbreviation-expanded
     query for the retrieval pipeline.
 
