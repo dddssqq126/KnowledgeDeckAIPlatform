@@ -113,6 +113,12 @@ SYSTEM_PROMPT = (
 # short turns, so this is plenty before older turns fall off the window.
 HISTORY_MAX_MESSAGES = 20
 
+CODE_CONTEXT_HEADER = (
+    "Retrieved project/library code context:\n"
+    "Use these snippets to identify existing functions, signatures, usages, "
+    "expected behavior, and related variables."
+)
+
 
 CODE_INTENT_UNIT_TEST = "unit_test"
 CODE_INTENT_DEBUG = "debug"
@@ -409,6 +415,12 @@ def _history_to_messages(rows: list[ChatMessage]) -> list[HumanMessage | AIMessa
     return msgs
 
 
+def _context_message_content(context: str, code_assist_intent: str | None) -> str:
+    if code_assist_intent is not None:
+        return f"{CODE_CONTEXT_HEADER}\n{context}"
+    return f"Context:\n{context}"
+
+
 async def stream_answer(
     *,
     history: list[ChatMessage],
@@ -421,6 +433,10 @@ async def stream_answer(
     messages: list[Any] = [SystemMessage(content=SYSTEM_PROMPT)]
     messages.extend(_history_to_messages(history))
     if context:
+        messages.append(
+            SystemMessage(
+                content=_context_message_content(
+                    context=context, code_assist_intent=code_assist_intent
         messages.append(SystemMessage(content=f"Context:\n{context}"))
     if rag_query:
         messages.append(

@@ -68,6 +68,7 @@ class StreamRequest(BaseModel):
     message: str = Field(min_length=1)
     use_rag: bool = False
     kb_ids: list[int] | None = None
+    code_assist_intent: str | None = None
 
 
 def _detect_code_assist_intent(message: str) -> str | None:
@@ -343,6 +344,7 @@ async def stream_chat(
     user_message = body.message
     use_rag = body.use_rag
     kb_ids = body.kb_ids
+    code_assist_intent = body.code_assist_intent
 
     async def generator() -> AsyncIterator[str]:
         try:
