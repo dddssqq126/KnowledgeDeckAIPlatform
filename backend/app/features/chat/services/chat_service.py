@@ -26,6 +26,58 @@ from app.db.models import ChatMessage, ChatRole
 
 logger = logging.getLogger(__name__)
 
+_IDENTIFIER_RE = r"[A-Za-z_][A-Za-z0-9_]*"
+_SYMBOL_RE = re.compile(rf"^{_IDENTIFIER_RE}(?:\.{_IDENTIFIER_RE})*$")
+_SYMBOL_TOKEN_RE = re.compile(
+    rf"(?<![A-Za-z0-9_.]){_IDENTIFIER_RE}(?:\.{_IDENTIFIER_RE})*(?![A-Za-z0-9_.])"
+)
+_CODE_SPAN_RE = re.compile(r"`+([^`]+?)`+")
+_SYMBOL_QUERY_TEMPLATE = (
+    "Find the definition, signature, implementation, usages, call sites, "
+    "and related function for symbol: {symbol}"
+)
+_SYMBOL_LOOKUP_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "call",
+    "calls",
+    "callsite",
+    "callsites",
+    "class",
+    "define",
+    "definition",
+    "find",
+    "function",
+    "implementation",
+    "in",
+    "is",
+    "method",
+    "of",
+    "reference",
+    "references",
+    "related",
+    "signature",
+    "symbol",
+    "the",
+    "to",
+    "usage",
+    "usages",
+    "used",
+    "variable",
+    "where",
+}
+_SYMBOL_LOOKUP_HINT_RE = re.compile(
+    r"("
+    r"\b(find|where|used|usage|usages|definition|define|signature|"
+    r"implementation|call\s+sites?|calls?|references?|related|function|"
+    r"method|class|variable|symbol)\b"
+    r"|相關|函式|函數|方法|類別|變數|定義|簽名|實作|實現|使用|用到|在哪|找到|呼叫|引用"
+    r")",
+    re.IGNORECASE,
+)
+
+
 SYSTEM_PROMPT = (
     "You are KnowledgeDeck, a helpful conversational assistant.\n\n"
     "This is a multi-turn conversation. The messages above (if any) are the "
@@ -157,7 +209,13 @@ _REWRITE_SYSTEM = (
     "for retrieval against a knowledge base, where a cross-encoder "
     "reranker scores (query, passage) pairs. Cross-encoders work best on "
     "natural-language queries with full canonical terms, not bare tokens "
-    "or abbreviations.\n\n"
+    "or abbreviations, except when the user is looking up a code symbol.\n\n"
+    "Identifier preservation rules:\n"
+    "- Never paraphrase code identifiers.\n"
+    "- Preserve exact function names, class names, variable names, method "
+    "names, module paths, and error strings.\n"
+    "- For symbol-only queries, search for definition, signature, usage, "
+    "and call sites.\n\n"
     "You may receive:\n"
     "- A first-turn question (no conversation history above).\n"
     "- A follow-up question that uses pronouns ('that', 'it', 'this "
@@ -188,6 +246,71 @@ _REWRITE_SYSTEM = (
 
 
 async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -> str:
+def detect_symbol_lookup(user_message: str) -> str | None:
+    """Return the exact code symbol requested by a symbol lookup, if any.
+
+    Supports Python/JavaScript identifiers and dotted paths, including
+    camelCase, PascalCase, snake_case, and module/class method references.
+    Natural-language questions without code-lookup intent are ignored so
+    the normal LLM rewrite path can handle documentation-style queries.
+    """
+    message = user_message.strip()
+    if not message:
+        return None
+
+    def normalize(candidate: str) -> str | None:
+        symbol = candidate.strip().strip("`'\"“”‘’.,;:!?()[]{}<>，。！？；：")
+        if symbol.endswith("()"):
+            symbol = symbol[:-2]
+        if _SYMBOL_RE.fullmatch(symbol):
+            return symbol
+        return None
+
+    code_span_symbols = [
+        symbol
+        for match in _CODE_SPAN_RE.finditer(message)
+        if (symbol := normalize(match.group(1)))
+    ]
+    if code_span_symbols:
+        return code_span_symbols[0]
+
+    symbol_only = normalize(message)
+    if symbol_only:
+        return symbol_only
+
+    if not _SYMBOL_LOOKUP_HINT_RE.search(message):
+        return None
+
+    candidates = [
+        symbol
+        for match in _SYMBOL_TOKEN_RE.finditer(message)
+        if (symbol := normalize(match.group(0)))
+        and symbol.lower() not in _SYMBOL_LOOKUP_STOPWORDS
+    ]
+    if not candidates:
+        return None
+
+    dotted = [symbol for symbol in candidates if "." in symbol]
+    snake_case = [symbol for symbol in candidates if "_" in symbol]
+    camel_or_pascal = [
+        symbol
+        for symbol in candidates
+        if re.search(r"[a-z][A-Z]|[A-Z][a-z]+[A-Z]", symbol)
+    ]
+
+    for preferred in (dotted, snake_case, camel_or_pascal):
+        if preferred:
+            return preferred[0]
+    return candidates[0]
+
+
+def _symbol_lookup_query(symbol: str) -> str:
+    return _SYMBOL_QUERY_TEMPLATE.format(symbol=symbol)
+
+
+async def rewrite_for_retrieval(
+    history: list[ChatMessage], user_message: str
+) -> str:
     """Rewrite the user's question into a standalone, abbreviation-expanded
     query for the retrieval pipeline.
 
@@ -199,6 +322,10 @@ async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -
     On any LLM error or off-rails output, falls back to the raw user
     message so retrieval still runs.
     """
+    symbol = detect_symbol_lookup(user_message)
+    if symbol:
+        return _symbol_lookup_query(symbol)
+
     if history:
         # Multi-turn: feed the rewriter the recent history so it can
         # resolve pronouns/ellipsis. Long assistant turns are clipped
