@@ -4,6 +4,7 @@ GET/POST/DELETE /chat/sessions for session management; POST /chat/stream for
 the actual SSE streaming response. Auth via the existing get_current_user
 dependency. Sessions are user-scoped — cross-user access returns 404.
 """
+
 from __future__ import annotations
 
 import json
@@ -162,7 +163,11 @@ def _message_out(m: ChatMessage) -> MessageOut:
 
 
 async def _load_owned_session(
-    session: AsyncSession, *, owner_user_id: int, session_id: int, with_messages: bool = False
+    session: AsyncSession,
+    *,
+    owner_user_id: int,
+    session_id: int,
+    with_messages: bool = False,
 ) -> ChatSession:
     stmt = select(ChatSession).where(
         ChatSession.id == session_id,
@@ -177,7 +182,9 @@ async def _load_owned_session(
     return s
 
 
-@router.post("/sessions", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/sessions", response_model=SessionOut, status_code=status.HTTP_201_CREATED
+)
 async def create_session(
     body: SessionCreate,
     user: User = Depends(get_current_user),
@@ -285,9 +292,7 @@ async def update_session(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> SessionOut:
-    s = await _load_owned_session(
-        session, owner_user_id=user.id, session_id=session_id
-    )
+    s = await _load_owned_session(session, owner_user_id=user.id, session_id=session_id)
     s.title = body.title
     await session.commit()
     await session.refresh(s)
@@ -354,6 +359,23 @@ async def stream_chat(
                     history=history, user_message=user_message
                 )
                 code_assist_intent = _detect_code_assist_intent(user_message)
+                code_intent = chat_service.detect_code_assist_intent(user_message)
+                if code_intent is not None:
+                    # Code queries must keep identifiers, import paths, and
+                    # error messages intact, so use the deterministic
+                    # code-aware rewriter instead of the natural-language
+                    # document rewriter.
+                    rag_query = chat_service.rewrite_for_code_retrieval(
+                        history=history, user_message=user_message, intent=code_intent
+                    )
+                else:
+                    # Multi-turn follow-ups ("and Python?", "what about that one?")
+                    # are not standalone — embedding them directly drags retrieval
+                    # off-topic. Rewriter resolves references against history into
+                    # a self-contained query before we hit the vector store.
+                    rag_query = await chat_service.rewrite_for_retrieval(
+                        history=history, user_message=user_message
+                    )
                 context, citations = await rag.retrieve_context(
                     user_id=user_id, kb_ids=kb_ids, query=rag_query
                 )
