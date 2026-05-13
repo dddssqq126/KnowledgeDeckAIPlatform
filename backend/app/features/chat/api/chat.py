@@ -4,6 +4,7 @@ GET/POST/DELETE /chat/sessions for session management; POST /chat/stream for
 the actual SSE streaming response. Auth via the existing get_current_user
 dependency. Sessions are user-scoped — cross-user access returns 404.
 """
+
 from __future__ import annotations
 
 import json
@@ -67,6 +68,7 @@ class StreamRequest(BaseModel):
     message: str = Field(min_length=1)
     use_rag: bool = False
     kb_ids: list[int] | None = None
+    code_assist_intent: str | None = None
 
 
 def _session_out(s: ChatSession) -> SessionOut:
@@ -89,7 +91,11 @@ def _message_out(m: ChatMessage) -> MessageOut:
 
 
 async def _load_owned_session(
-    session: AsyncSession, *, owner_user_id: int, session_id: int, with_messages: bool = False
+    session: AsyncSession,
+    *,
+    owner_user_id: int,
+    session_id: int,
+    with_messages: bool = False,
 ) -> ChatSession:
     stmt = select(ChatSession).where(
         ChatSession.id == session_id,
@@ -104,7 +110,9 @@ async def _load_owned_session(
     return s
 
 
-@router.post("/sessions", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/sessions", response_model=SessionOut, status_code=status.HTTP_201_CREATED
+)
 async def create_session(
     body: SessionCreate,
     user: User = Depends(get_current_user),
@@ -212,9 +220,7 @@ async def update_session(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> SessionOut:
-    s = await _load_owned_session(
-        session, owner_user_id=user.id, session_id=session_id
-    )
+    s = await _load_owned_session(session, owner_user_id=user.id, session_id=session_id)
     s.title = body.title
     await session.commit()
     await session.refresh(s)
@@ -265,6 +271,7 @@ async def stream_chat(
     user_message = body.message
     use_rag = body.use_rag
     kb_ids = body.kb_ids
+    code_assist_intent = body.code_assist_intent
 
     async def generator() -> AsyncIterator[str]:
         try:
@@ -284,7 +291,10 @@ async def stream_chat(
 
             collected: list[str] = []
             async for token in chat_service.stream_answer(
-                history=history, user_message=user_message, context=context
+                history=history,
+                user_message=user_message,
+                context=context,
+                code_assist_intent=code_assist_intent,
             ):
                 collected.append(token)
                 yield _sse("token", {"text": token})

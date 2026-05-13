@@ -8,6 +8,7 @@ maker. This module contains:
     against a self-contained query rather than the literal user message
   - `stream_answer` — token-streaming reply assembly
 """
+
 from __future__ import annotations
 
 import logging
@@ -38,6 +39,12 @@ SYSTEM_PROMPT = (
 # 20 = up to ~10 user/assistant pairs. Conversational chat tends to have
 # short turns, so this is plenty before older turns fall off the window.
 HISTORY_MAX_MESSAGES = 20
+
+CODE_CONTEXT_HEADER = (
+    "Retrieved project/library code context:\n"
+    "Use these snippets to identify existing functions, signatures, usages, "
+    "expected behavior, and related variables."
+)
 
 
 _REWRITE_SYSTEM = (
@@ -75,9 +82,7 @@ _REWRITE_SYSTEM = (
 )
 
 
-async def rewrite_for_retrieval(
-    history: list[ChatMessage], user_message: str
-) -> str:
+async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -> str:
     """Rewrite the user's question into a standalone, abbreviation-expanded
     query for the retrieval pipeline.
 
@@ -154,17 +159,30 @@ def _history_to_messages(rows: list[ChatMessage]) -> list[HumanMessage | AIMessa
     return msgs
 
 
+def _context_message_content(context: str, code_assist_intent: str | None) -> str:
+    if code_assist_intent is not None:
+        return f"{CODE_CONTEXT_HEADER}\n{context}"
+    return f"Context:\n{context}"
+
+
 async def stream_answer(
     *,
     history: list[ChatMessage],
     user_message: str,
     context: str,
+    code_assist_intent: str | None = None,
 ) -> AsyncIterator[str]:
     """Yields LLM token chunks as plain strings."""
     messages: list[Any] = [SystemMessage(content=SYSTEM_PROMPT)]
     messages.extend(_history_to_messages(history))
     if context:
-        messages.append(SystemMessage(content=f"Context:\n{context}"))
+        messages.append(
+            SystemMessage(
+                content=_context_message_content(
+                    context=context, code_assist_intent=code_assist_intent
+                )
+            )
+        )
     messages.append(HumanMessage(content=user_message))
 
     llm = _build_llm()
