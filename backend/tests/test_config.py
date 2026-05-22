@@ -56,6 +56,7 @@ def test_settings_expose_storage_fields(monkeypatch) -> None:
     s = Settings()
     assert s.local_storage_root == "/tmp/kd-storage"
     assert s.storage_bucket == "kd-test"
+    assert s.object_storage_backend == "sqlite"
     assert s.max_upload_bytes == 52_428_800
 
 

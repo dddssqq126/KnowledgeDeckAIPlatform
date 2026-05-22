@@ -28,6 +28,7 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     storage_bucket: str = "knowledgedeck"
+    object_storage_backend: str = "sqlite"
     local_storage_root: str = "/var/lib/knowledgedeck-storage"
 
     # 50 MiB hard cap on a single file upload.
