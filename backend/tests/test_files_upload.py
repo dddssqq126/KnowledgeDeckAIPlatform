@@ -185,7 +185,7 @@ async def test_upload_rolls_back_db_when_storage_put_fails(
     async def boom(*args, **kwargs):
         raise RuntimeError("simulated storage outage")
 
-    monkeypatch.setattr(storage.LocalObjectStorageClient, "put_object", boom, raising=True)
+    monkeypatch.setattr(storage.SQLiteObjectStorageClient, "put_object", boom, raising=True)
     kb_id = await make_kb(http_client, alice)
     res = await http_client.post(
         f"/knowledge-bases/{kb_id}/files",

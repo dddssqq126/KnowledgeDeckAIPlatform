@@ -8,6 +8,7 @@ from sqlalchemy import (
     Enum as SAEnum,
     ForeignKey,
     Index,
+    LargeBinary,
     Text,
     func,
 )
@@ -115,6 +116,20 @@ class KnowledgeFile(Base):
             unique=True,
             postgresql_where=sa.text("deleted_at IS NULL"),
         ),
+    )
+
+
+class ObjectBlob(Base):
+    """SQLite-backed object bytes keyed by bucket and object key."""
+
+    __tablename__ = "object_blobs"
+
+    bucket: Mapped[str] = mapped_column(Text, primary_key=True)
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
 
@@ -235,7 +250,7 @@ class SlideSession(Base):
         nullable=False,
         default=SlideStatus.OUTLINING,
     )
-    # MinIO object key for the most recently rendered PPTX, NULL until first
+    # SQLite object key for the most recently rendered PPTX, NULL until first
     # successful render. New renders overwrite the key.
     generated_pptx_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Optional visual template authored in Presenton's UI. When set, render

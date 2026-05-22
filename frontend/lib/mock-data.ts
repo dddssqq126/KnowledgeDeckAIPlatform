@@ -75,7 +75,7 @@ let filesByKb: Record<number, KnowledgeFile[]> = {
 
 let chatSessions: ChatSession[] = [
   chatSession(1, "RAG onboarding checklist", iso(160), iso(45)),
-  chatSession(2, "Postgres indexing explanation", iso(980), iso(920)),
+  chatSession(2, "database indexing explanation", iso(980), iso(920)),
   chatSession(3, "Launch FAQ assistant", iso(1450), iso(1300)),
 ];
 
@@ -91,7 +91,7 @@ let chatMessages: Record<number, ChatMessage[]> = {
     ),
   ],
   2: [
-    chatMessage(23, "user", "When should we add a Postgres index?", null, iso(925)),
+    chatMessage(23, "user", "When should we add a database index?", null, iso(925)),
     chatMessage(
       24,
       "assistant",

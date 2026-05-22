@@ -3,7 +3,7 @@
 Mirrors the chat session API but replaces the chat system prompt with a
 slide-planner one (in slide_chat_service) and adds a /render endpoint that
 calls Presenton, retrieves the PPTX from the shared volume, and stores it
-in MinIO.
+in SQLite object storage.
 """
 from __future__ import annotations
 

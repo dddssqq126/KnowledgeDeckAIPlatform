@@ -25,7 +25,7 @@ KnowledgeDeck exposes a REST API plus two SSE streaming endpoints. All endpoints
 | `invalid_content` | Magic-byte or UTF-8 check failed |
 | `file_too_large` | Upload exceeded 50 MB |
 | `duplicate_filename` | KB already has a non-deleted file with the same name |
-| `storage_error` | MinIO write failed |
+| `storage_error` | SQLite object storage write failed |
 | `no_outline_ready` | `/render` called before any `[OUTLINE_READY]` assistant turn |
 | `outline_unparsable` | Latest `[OUTLINE_READY]` turn doesn't contain `## Slide N: ...` blocks |
 
@@ -80,10 +80,9 @@ Liveness check. Always 200 if the process is up.
 
 ### GET /ready
 
-Readiness check. Probes Postgres + MinIO.
+Readiness check. Returns ready when the backend process can serve requests; SQLite schema/object initialization happens during startup.
 
 **Response 200**: `{"status": "ready"}`
-**Response 503**: `{"detail": "<sub-system>_unavailable"}`
 
 ---
 
@@ -189,7 +188,7 @@ Upload a file. Synchronous: parses + chunks + embeds + indexes inline. Returns t
 - `400 invalid_content` — magic-byte / UTF-8 check failed
 - `409 duplicate_filename` — KB already has a non-deleted file with this name
 - `413 file_too_large` — exceeded `MAX_UPLOAD_BYTES` (default 50 MiB)
-- `500 storage_error` — MinIO failure
+- `500 storage_error` — SQLite object storage failure
 
 **Example**:
 ```bash
@@ -200,7 +199,7 @@ curl -X POST "http://localhost:8080/knowledge-bases/1/files" \
 
 ### DELETE /knowledge-bases/{kb_id}/files/{file_id}
 
-Soft-delete a file. Vectors are removed from Qdrant immediately; the MinIO object stays.
+Soft-delete a file. Vectors are removed from Qdrant immediately; the SQLite object blob stays.
 
 **Response 204**: empty body.
 
@@ -350,7 +349,7 @@ List user's slide decks.
 [
   {
     "id": 14,
-    "title": "5 slides about Postgres indexing",
+    "title": "5 slides about database indexing",
     "status": "rendered",
     "has_pptx": true,
     "custom_template_id": null,
@@ -386,7 +385,7 @@ Detail with full message history.
   "created_at": "...",
   "updated_at": "...",
   "messages": [
-    { "id": 200, "role": "user", "content": "5 slides about Postgres indexing", ... },
+    { "id": 200, "role": "user", "content": "5 slides about database indexing", ... },
     { "id": 201, "role": "assistant", "content": "What's the audience? ...", ... },
     { "id": 202, "role": "user", "content": "junior backend devs, modern style", ... },
     { "id": 203, "role": "assistant",
@@ -418,7 +417,7 @@ Server-Sent Events planner conversation. Same shape as `/chat/stream` plus an `o
 **Request**:
 ```json
 {
-  "message": "5 slides about Postgres indexing for backend devs",
+  "message": "5 slides about database indexing for backend devs",
   "use_rag": true,
   "kb_ids": null
 }
@@ -501,7 +500,7 @@ Pin a custom template to a session.
 
 ### POST /admin/rag-reindex
 
-**Destructive.** Drops the Qdrant collection and re-ingests every non-deleted file from MinIO bytes. Used after vector-pipeline changes (e.g., when sparse vectors were added).
+**Destructive.** Drops the Qdrant collection and re-ingests every non-deleted file from SQLite object blobs. Used after vector-pipeline changes (e.g., when sparse vectors were added).
 
 Auth-only (any logged-in user) for MVP. In production, gate behind an admin role.
 
