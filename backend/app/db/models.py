@@ -172,6 +172,53 @@ class ChatMessage(Base):
     )
 
     session: Mapped[ChatSession] = relationship(back_populates="messages")
+    feedbacks: Mapped[list["ChatMessageFeedback"]] = relationship(
+        back_populates="message"
+    )
+
+
+class ChatFeedbackType(enum.Enum):
+    LIKE = "like"
+    DISLIKE = "dislike"
+
+
+class ChatMessageFeedback(Base):
+    __tablename__ = "chat_message_feedbacks"
+
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
+    message_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("chat_messages.id"), nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("users.id"), nullable=False
+    )
+    feedback: Mapped[ChatFeedbackType] = mapped_column(
+        SAEnum(
+            ChatFeedbackType,
+            name="chat_feedback_type",
+            create_type=False,
+            values_callable=lambda enum_cls: [m.value for m in enum_cls],
+        ),
+        nullable=False,
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    message: Mapped[ChatMessage] = relationship(back_populates="feedbacks")
+
+    __table_args__ = (
+        Index(
+            "uq_chat_message_feedback_owner",
+            "message_id",
+            "owner_user_id",
+            unique=True,
+        ),
+    )
 
 
 class ChatSessionShare(Base):

@@ -14,6 +14,8 @@ export type ChatSession = {
   updated_at: string;
 };
 
+export type ChatFeedback = "like" | "dislike";
+
 export type ChatMessage = {
   id: number;
   role: "user" | "assistant";
@@ -76,6 +78,15 @@ export async function deleteSession(id: number): Promise<void> {
 export async function searchChatSessions(q: string): Promise<ChatSearchResult[]> {
   const res = await api.get<ChatSearchResult[]>("/chat/search", { params: { q } });
   return res.data;
+}
+
+
+
+export async function sendMessageFeedback(
+  messageId: number,
+  feedback: ChatFeedback,
+): Promise<void> {
+  await api.post(`/chat/messages/${messageId}/feedback`, { feedback });
 }
 
 export type StreamRequest = {
