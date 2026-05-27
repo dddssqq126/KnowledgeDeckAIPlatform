@@ -1,7 +1,7 @@
 "use client";
 
 import { api } from "./api";
-import { resolveExternalUsername, useAuthStore } from "./auth-store";
+import { useAuthStore } from "./auth-store";
 import { mockAppendChatTurn, mockGetSharedSession, mockShareSession } from "./mock-data";
 import { isMockDataMode } from "./mock-mode";
 
@@ -118,7 +118,6 @@ export async function streamChat(
   }
 
   const token = useAuthStore.getState().token;
-  const username = resolveExternalUsername();
   const baseURL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
   let res: Response;
   try {
@@ -126,7 +125,6 @@ export async function streamChat(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-User-Name": username,
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(req),
