@@ -20,6 +20,7 @@ from qdrant_client.http import models as qm
 
 from app.core.config import get_settings
 from app.features.rag.services.sparse_embed import SparseVec
+from app.features.rag.services.tagger import DocTags
 
 
 _client: QdrantClient | None = None
@@ -84,6 +85,12 @@ async def ensure_collection() -> None:
                 field_name=field,
                 field_schema=qm.PayloadSchemaType.INTEGER,
             )
+        for field in ("doc_type", "intent", "tags_topic", "language"):
+            client.create_payload_index(
+                collection_name=s.qdrant_collection,
+                field_name=field,
+                field_schema=qm.PayloadSchemaType.KEYWORD,
+            )
 
     await asyncio.to_thread(_impl)
 
@@ -111,6 +118,7 @@ async def upsert_chunks(
     chunks: list[dict[str, Any]],
     dense_vectors: list[list[float]],
     sparse_vectors: list[SparseVec],
+    tags: DocTags,
 ) -> None:
     """`chunks` is a list of {text, page_number?, chunk_index} dicts. The
     three vector lists must be the same length as chunks."""
@@ -139,6 +147,10 @@ async def upsert_chunks(
                     "text": chunk["text"],
                     "page_number": chunk.get("page_number"),
                     "chunk_index": chunk["chunk_index"],
+                    "tags_topic": tags.topic,
+                    "doc_type": tags.doc_type,
+                    "intent": tags.intent,
+                    "language": tags.language,
                 },
             )
             for chunk, dense, sparse in zip(
