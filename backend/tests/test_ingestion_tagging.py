@@ -76,3 +76,47 @@ def _coro(value):
     async def _c():
         return value
     return _c()
+
+
+@pytest.mark.asyncio
+async def test_ingest_skips_tagging_when_disabled(monkeypatch, db_session, file_row):
+    from app.core.config import Settings
+
+    monkeypatch.setattr(ingestion, "get_settings", lambda: Settings(rag_tagging_enabled=False))
+    monkeypatch.setattr(
+        document_parser, "parse",
+        lambda ext, data: [document_parser.ParsedSegment(text="raw body", page_number=1)],
+    )
+
+    def _boom(text, filename):
+        raise AssertionError("generate_doc_tags must not be called when tagging disabled")
+
+    monkeypatch.setattr(ingestion.tagger, "generate_doc_tags", _boom)
+
+    captured = {}
+
+    async def fake_embed(texts):
+        captured["embed_texts"] = texts
+        return [[0.0] * 4 for _ in texts]
+
+    async def fake_sparse(texts):
+        from app.features.rag.services.sparse_embed import SparseVec
+        return [SparseVec(indices=[1], values=[1.0]) for _ in texts]
+
+    async def fake_ensure():
+        return None
+
+    async def fake_upsert(**kwargs):
+        captured["upsert"] = kwargs
+
+    monkeypatch.setattr(ingestion, "_embed", fake_embed)
+    monkeypatch.setattr(ingestion.sparse_embed, "embed_passages", fake_sparse)
+    monkeypatch.setattr(ingestion.qdrant_store, "ensure_collection", fake_ensure)
+    monkeypatch.setattr(ingestion.qdrant_store, "upsert_chunks", fake_upsert)
+
+    await ingestion.ingest_file(session=db_session, file_row=file_row, data=b"raw body")
+
+    # no enrichment prefix — embedded text equals the raw chunk text
+    assert captured["embed_texts"] == ["raw body"]
+    assert captured["upsert"]["tags"] == DocTags.empty()
+    assert file_row.status is FileStatus.INDEXED
