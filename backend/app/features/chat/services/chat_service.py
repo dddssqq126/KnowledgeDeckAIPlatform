@@ -263,7 +263,6 @@ _REWRITE_SYSTEM = (
 )
 
 
-async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -> str:
 def detect_symbol_lookup(user_message: str) -> str | None:
     """Return the exact code symbol requested by a symbol lookup, if any.
 

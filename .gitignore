@@ -24,6 +24,7 @@ storage/
 minio/
 postgres/
 qdrant/
+qdrant_data/
 redis/
 
 .DS_Store
