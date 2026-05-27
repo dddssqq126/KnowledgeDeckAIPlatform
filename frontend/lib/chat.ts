@@ -5,7 +5,12 @@ import { useAuthStore } from "./auth-store";
 import { mockAppendChatTurn, mockGetSharedSession, mockShareSession } from "./mock-data";
 import { isMockDataMode } from "./mock-mode";
 
-export type Citation = { file_id: number; filename: string };
+export type Citation = {
+  file_id: number;
+  filename: string;
+  doc_type?: string | null;
+  tags_topic?: string[];
+};
 
 export type ChatSession = {
   id: number;
