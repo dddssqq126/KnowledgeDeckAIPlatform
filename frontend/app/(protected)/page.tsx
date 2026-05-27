@@ -379,6 +379,16 @@ function CitationList({ citations }: { citations: Citation[] }) {
             className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1"
           >
             <span>{citation.filename}</span>
+            {citation.doc_type ? (
+              <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                {citation.doc_type}
+              </span>
+            ) : null}
+            {(citation.tags_topic ?? []).map((t) => (
+              <span key={t} className="text-[10px] text-muted-foreground">
+                #{t}
+              </span>
+            ))}
             <button
               type="button"
               onClick={() => void handleDownload(citation)}
