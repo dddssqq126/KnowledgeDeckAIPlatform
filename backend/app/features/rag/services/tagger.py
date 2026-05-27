@@ -51,8 +51,10 @@ def _parse_tags(raw: str) -> DocTags:
         return DocTags.empty()
 
     topic_raw = obj.get("topic")
-    topic = [str(t).strip() for t in topic_raw if str(t).strip()][:_MAX_TOPICS] \
-        if isinstance(topic_raw, list) else []
+    if isinstance(topic_raw, list):
+        topic = [s for t in topic_raw if isinstance(t, str) and (s := t.strip())][:_MAX_TOPICS]
+    else:
+        topic = []
 
     doc_type = obj.get("doc_type")
     doc_type = doc_type if doc_type in _DOC_TYPES else None

@@ -46,3 +46,20 @@ def test_enrich_prepends_tag_line() -> None:
 
 def test_enrich_empty_tags_returns_text_unchanged() -> None:
     assert enrich_text_for_embedding("hello", DocTags.empty()) == "hello"
+
+
+def test_parse_drops_non_string_topics() -> None:
+    raw = '{"topic": ["ok", null, 42, "  ", "good"]}'
+    tags = _parse_tags(raw)
+    assert tags.topic == ["ok", "good"]
+
+
+def test_parse_non_dict_json_returns_empty() -> None:
+    assert _parse_tags("[]") == DocTags.empty()
+    assert _parse_tags("null") == DocTags.empty()
+    assert _parse_tags("") == DocTags.empty()
+
+
+def test_enrich_language_only_returns_text_unchanged() -> None:
+    out = enrich_text_for_embedding("hello", DocTags(language="en"))
+    assert out == "hello"
