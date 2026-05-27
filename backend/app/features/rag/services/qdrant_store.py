@@ -244,3 +244,57 @@ async def hybrid_search(
         return out
 
     return await asyncio.to_thread(_impl)
+
+
+async def list_file_tags(*, user_id: int, kb_id: int) -> list[dict[str, Any]]:
+    """Per-file tag summary for one KB, read from the Qdrant payload.
+
+    Returns one dict per file_id: {file_id, doc_type, intent, tags_topic,
+    chunk_count}. Tags are per-document, so they're taken from the first point
+    seen for each file; chunk_count counts that file's points. Returns [] when
+    the collection does not exist yet.
+    """
+    s = get_settings()
+
+    def _impl() -> list[dict[str, Any]]:
+        client = _get_client()
+        if not client.collection_exists(s.qdrant_collection):
+            return []
+        flt = qm.Filter(
+            must=[
+                qm.FieldCondition(key="user_id", match=qm.MatchValue(value=user_id)),
+                qm.FieldCondition(key="kb_id", match=qm.MatchValue(value=kb_id)),
+            ]
+        )
+        agg: dict[int, dict[str, Any]] = {}
+        offset = None
+        while True:
+            points, offset = client.scroll(
+                collection_name=s.qdrant_collection,
+                scroll_filter=flt,
+                with_payload=True,
+                with_vectors=False,
+                limit=256,
+                offset=offset,
+            )
+            for p in points:
+                pl = p.payload or {}
+                fid = pl.get("file_id")
+                if fid is None:
+                    continue
+                entry = agg.get(fid)
+                if entry is None:
+                    agg[fid] = {
+                        "file_id": fid,
+                        "doc_type": pl.get("doc_type"),
+                        "intent": pl.get("intent"),
+                        "tags_topic": pl.get("tags_topic") or [],
+                        "chunk_count": 1,
+                    }
+                else:
+                    entry["chunk_count"] += 1
+            if offset is None:
+                break
+        return list(agg.values())
+
+    return await asyncio.to_thread(_impl)
