@@ -187,6 +187,12 @@ async def hybrid_search(
     s = get_settings()
 
     def _impl() -> list[dict[str, Any]]:
+        client = _get_client()
+        # No collection yet (e.g. nothing has ever been ingested) → no hits.
+        # Returning [] lets the caller degrade to general knowledge instead
+        # of the request failing with a Qdrant 404.
+        if not client.collection_exists(s.qdrant_collection):
+            return []
         must: list[qm.FieldCondition] = [
             qm.FieldCondition(key="user_id", match=qm.MatchValue(value=user_id))
         ]
@@ -195,7 +201,7 @@ async def hybrid_search(
                 qm.FieldCondition(key="kb_id", match=qm.MatchAny(any=kb_ids))
             )
         flt = qm.Filter(must=must)
-        response = _get_client().query_points(
+        response = client.query_points(
             collection_name=s.qdrant_collection,
             prefetch=[
                 qm.Prefetch(
