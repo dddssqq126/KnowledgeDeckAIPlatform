@@ -57,6 +57,12 @@ describe("MarkdownMessage", () => {
     expect(screen.getByText("42")).toBeInTheDocument();
   });
 
+  it("renders inline code as an inline <code>, not a block <div>", () => {
+    render(<MarkdownMessage content={"use the `helper()` call"} />);
+    const el = screen.getByText("helper()");
+    expect(el.tagName).toBe("CODE");
+  });
+
   it("renders prose-like unlabeled fences as wrapped plain text", () => {
     render(
       <MarkdownMessage

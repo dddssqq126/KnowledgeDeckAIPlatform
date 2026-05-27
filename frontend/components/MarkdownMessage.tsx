@@ -46,17 +46,32 @@ export function MarkdownMessage({ content }: { content: string }) {
   );
 }
 
+// react-markdown v9 no longer passes an `inline` prop to the `code` renderer,
+// and block (fenced/indented) code always arrives wrapped in a `<pre>` handled
+// by PreBlock. So the `code` renderer is only for INLINE code — it must emit an
+// inline <code>; a <div> here would be invalid inside a <p> (hydration error).
 function CodeBlock(props: any) {
-  const { inline, className, children, ...rest } = props;
-  const text = String(children ?? "").replace(/\n$/, "");
-  const language = /language-(\w+)/.exec(className || "")?.[1];
+  const { className, children, ...rest } = props;
+  return (
+    <code className={className} {...rest}>
+      {children}
+    </code>
+  );
+}
 
-  if (inline) {
-    return (
-      <code className={className} {...rest}>
-        {children}
-      </code>
-    );
+// Block-level code. Markdown renders fenced/indented blocks as <pre><code>, so
+// they reach us here at block level (never inside a <p>) — a <div> is safe.
+// We read the inner <code> element's class + text rather than the removed
+// `inline` prop.
+function PreBlock({ children }: { children?: ReactNode }) {
+  const codeEl: any = Array.isArray(children) ? children[0] : children;
+  const codeProps = codeEl?.props ?? {};
+  const className: string = codeProps.className ?? "";
+  const text = String(codeProps.children ?? "").replace(/\n$/, "");
+  const language = /language-(\w+)/.exec(className)?.[1];
+
+  if (!text) {
+    return <pre>{children}</pre>;
   }
 
   if (!language && !looksLikeCode(text)) {
@@ -86,16 +101,11 @@ function CodeBlock(props: any) {
           lineHeight: "1.5rem",
         }}
         codeTagProps={{ className: "chat-code-token" }}
-        {...rest}
       >
         {text}
       </SyntaxHighlighter>
     </div>
   );
-}
-
-function PreBlock({ children }: { children?: ReactNode }) {
-  return <>{children}</>;
 }
 
 function looksLikeCode(text: string): boolean {
