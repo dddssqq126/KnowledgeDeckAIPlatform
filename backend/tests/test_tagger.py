@@ -63,3 +63,42 @@ def test_parse_non_dict_json_returns_empty() -> None:
 def test_enrich_language_only_returns_text_unchanged() -> None:
     out = enrich_text_for_embedding("hello", DocTags(language="en"))
     assert out == "hello"
+
+
+import pytest
+
+from app.features.rag.services import tagger as tagger_mod
+
+
+@pytest.mark.asyncio
+async def test_generate_doc_tags_returns_empty_on_llm_error(monkeypatch) -> None:
+    class _BoomLLM:
+        async def ainvoke(self, _messages):
+            raise RuntimeError("vllm down")
+
+    monkeypatch.setattr(tagger_mod, "_build_tagger_llm", lambda: _BoomLLM())
+
+    tags = await tagger_mod.generate_doc_tags("some document text", "doc.txt")
+    assert tags == DocTags.empty()
+
+
+@pytest.mark.asyncio
+async def test_generate_doc_tags_parses_llm_output(monkeypatch) -> None:
+    class _FakeResult:
+        content = '{"topic": ["k8s"], "doc_type": "guide", "intent": "how_to", "language": "en"}'
+
+    class _FakeLLM:
+        def __init__(self):
+            self.seen = None
+
+        async def ainvoke(self, messages):
+            self.seen = messages
+            return _FakeResult()
+
+    fake = _FakeLLM()
+    monkeypatch.setattr(tagger_mod, "_build_tagger_llm", lambda: fake)
+
+    tags = await tagger_mod.generate_doc_tags("kubernetes setup guide ...", "setup.md")
+    assert tags.topic == ["k8s"]
+    assert tags.doc_type == "guide"
+    assert any("kubernetes setup guide" in str(m.content) for m in fake.seen)

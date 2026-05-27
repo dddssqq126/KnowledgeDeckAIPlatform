@@ -81,3 +81,42 @@ def enrich_text_for_embedding(text: str, tags: DocTags) -> str:
     if not parts:
         return text
     return "[" + " | ".join(parts) + "]\n" + text
+
+
+_TAGGER_SYSTEM = (
+    "You label a document for a retrieval system. Read the document and reply "
+    "with ONLY a JSON object, no prose, no code fence, with keys:\n"
+    '  "topic": array of 2-5 short lowercase topic keywords,\n'
+    f'  "doc_type": one of {sorted(_DOC_TYPES)},\n'
+    f'  "intent": one of {sorted(_INTENTS)},\n'
+    '  "language": ISO language code of the document (e.g. "en", "zh").\n'
+    "If unsure about doc_type or intent, omit that key. Output JSON only."
+)
+
+
+def _build_tagger_llm() -> ChatOpenAI:
+    s = get_settings()
+    return ChatOpenAI(
+        model=s.llm_model,
+        base_url=s.llm_base_url,
+        api_key=s.llm_api_key,
+        streaming=False,
+        temperature=0,
+        max_tokens=256,
+    )
+
+
+async def generate_doc_tags(text: str, filename: str) -> DocTags:
+    """One LLM call -> validated DocTags. Never raises: any failure (LLM down,
+    timeout, bad output) returns DocTags.empty() so ingestion can proceed."""
+    s = get_settings()
+    snippet = text[: s.rag_tag_max_chars]
+    prompt = f"Filename: {filename}\n\nDocument:\n{snippet}"
+    try:
+        result = await _build_tagger_llm().ainvoke(
+            [SystemMessage(content=_TAGGER_SYSTEM), HumanMessage(content=prompt)]
+        )
+        return _parse_tags(result.content or "")
+    except Exception:
+        logger.exception("doc_tagging_failed filename=%s", filename)
+        return DocTags.empty()
