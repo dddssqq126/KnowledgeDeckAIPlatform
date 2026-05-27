@@ -107,5 +107,12 @@ async def retrieve_context(
         if fid in seen:
             continue
         seen.add(fid)
-        citations.append({"file_id": fid, "filename": hit["payload"]["filename"]})
+        citations.append(
+            {
+                "file_id": fid,
+                "filename": hit["payload"]["filename"],
+                "doc_type": hit["payload"].get("doc_type"),
+                "tags_topic": hit["payload"].get("tags_topic") or [],
+            }
+        )
     return context, citations
