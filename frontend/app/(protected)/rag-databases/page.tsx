@@ -4,9 +4,11 @@ import { Database, Download, FileText, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  type FileTags,
   type KnowledgeBase,
   type KnowledgeFile,
   downloadKnowledgeFile,
+  listFileTags,
   listFiles,
   listKnowledgeBases,
 } from "../../../lib/knowledge-bases";
@@ -15,19 +17,13 @@ type RagDatabase = KnowledgeBase & {
   files: KnowledgeFile[];
   vector_count: number;
   embedding_model: string;
+  fileTags: Map<number, FileTags>;
 };
 
 type FilteredRagDatabase = RagDatabase & {
   visible_files: KnowledgeFile[];
   database_matches: boolean;
 };
-
-function estimateVectors(files: KnowledgeFile[]): number {
-  return files.reduce(
-    (sum, file) => sum + Math.max(8, Math.ceil(file.size_bytes / 900)),
-    0,
-  );
-}
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -51,12 +47,15 @@ export default function RagDatabasesPage() {
         const rows = await Promise.all(
           kbs.map(async (kb) => {
             const files = await listFiles(kb.id);
+            const tags = await listFileTags(kb.id);
+            const fileTags = new Map(tags.map((t) => [t.file_id, t]));
             return {
               ...kb,
               files,
               file_count: files.length,
-              vector_count: estimateVectors(files),
+              vector_count: tags.reduce((sum, t) => sum + t.chunk_count, 0),
               embedding_model: "BAAI/bge-m3",
+              fileTags,
             };
           }),
         );
@@ -207,11 +206,30 @@ export default function RagDatabasesPage() {
                           key={file.id}
                           className="flex items-center justify-between gap-3 px-3 py-2 text-xs"
                         >
-                          <div className="flex min-w-0 items-center gap-2">
-                            <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                            <span className="truncate text-foreground">
-                              {file.filename}
-                            </span>
+                          <div className="flex min-w-0 flex-col">
+                            <div className="flex items-center gap-2">
+                              <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              <span className="truncate text-foreground">
+                                {file.filename}
+                              </span>
+                            </div>
+                            {(() => {
+                              const t = db.fileTags.get(file.id);
+                              if (!t) return null;
+                              return (
+                                <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px]">
+                                  {t.doc_type ? (
+                                    <span className="rounded bg-emerald-50 px-1 text-emerald-700">{t.doc_type}</span>
+                                  ) : null}
+                                  {t.intent ? (
+                                    <span className="rounded bg-sky-50 px-1 text-sky-700">{t.intent}</span>
+                                  ) : null}
+                                  {t.tags_topic.map((tp) => (
+                                    <span key={tp} className="text-muted-foreground">#{tp}</span>
+                                  ))}
+                                </div>
+                              );
+                            })()}
                           </div>
                           <div className="flex shrink-0 items-center gap-3 text-muted-foreground">
                             <span>{file.extension.toUpperCase()}</span>
