@@ -4,12 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import RagDatabasesPage from "./page";
 import {
   downloadKnowledgeFile,
+  listFileTags,
   listFiles,
   listKnowledgeBases,
 } from "../../../lib/knowledge-bases";
 
 vi.mock("../../../lib/knowledge-bases", () => ({
   downloadKnowledgeFile: vi.fn().mockResolvedValue(undefined),
+  listFileTags: vi.fn(),
   listFiles: vi.fn(),
   listKnowledgeBases: vi.fn(),
 }));
@@ -41,6 +43,7 @@ describe("RagDatabasesPage", () => {
           ]
         : [file(21, 2, "market_map.pdf", "pdf")],
     );
+    vi.mocked(listFileTags).mockResolvedValue([]);
   });
 
   it("renders imported files with download buttons", async () => {
@@ -52,6 +55,37 @@ describe("RagDatabasesPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Download react_hooks.txt" }));
 
     expect(downloadKnowledgeFile).toHaveBeenCalledWith(11, "react_hooks.txt");
+  });
+
+  it("shows real chunk count and tag chips per file", async () => {
+    vi.mocked(listKnowledgeBases).mockResolvedValue([
+      {
+        id: 1,
+        name: "kb",
+        description: null,
+        file_count: 1,
+        created_at: "2026-05-06T00:00:00Z",
+      },
+    ]);
+    vi.mocked(listFiles).mockResolvedValue([
+      file(1, 1, "k8s.txt", "txt"),
+    ]);
+    vi.mocked(listFileTags).mockResolvedValue([
+      {
+        file_id: 1,
+        doc_type: "guide",
+        intent: "how_to",
+        tags_topic: ["kubernetes"],
+        chunk_count: 12,
+      },
+    ]);
+
+    render(<RagDatabasesPage />);
+
+    expect(await screen.findByText("k8s.txt")).toBeInTheDocument();
+    expect(screen.getByText("guide")).toBeInTheDocument();
+    expect(screen.getByText("#kubernetes")).toBeInTheDocument();
+    expect(screen.getByText(/12 vectors/)).toBeInTheDocument();
   });
 
   it("filters imported files by filename", async () => {

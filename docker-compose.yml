@@ -23,6 +23,9 @@ services:
       - presenton_data:/presenton_data:ro
       # Local filesystem object storage mount.
       - local_storage_data:/var/lib/knowledgedeck-storage
+      # Persist the SQLite DB across container rebuilds — /app is in the
+      # container's writable layer and is wiped on every `compose up --build`.
+      - backend_data:/app/data
     depends_on:
       qdrant:
         condition: service_started
@@ -168,6 +171,7 @@ volumes:
   qdrant_data:
   presenton_data:
   local_storage_data:
+  backend_data:
   hf_cache:
 
 # Override the auto-created "<project>_default" network with an explicit

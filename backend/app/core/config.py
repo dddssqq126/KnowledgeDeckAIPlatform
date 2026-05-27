@@ -82,6 +82,12 @@ class Settings(BaseSettings):
     chunk_chars: int = 1200
     chunk_overlap: int = 150
 
+    # LLM document tagging (see docs/superpowers/specs/2026-05-27-tag-aware-rag-design.md).
+    # When enabled, ingestion makes one LLM call per document to produce
+    # topic/doc_type/intent tags and folds them into the embedded text.
+    rag_tagging_enabled: bool = True
+    rag_tag_max_chars: int = 4000  # head of the doc sent to the tagger LLM
+
     gpu_device: str = "0"
     vllm_chat_gpu_memory_utilization: float = 0.70
     vllm_chat_max_model_len: int = 16384

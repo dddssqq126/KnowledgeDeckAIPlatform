@@ -38,6 +38,20 @@ export type KnowledgeFile = {
   created_at: string;
 };
 
+export type FileTags = {
+  file_id: number;
+  doc_type: string | null;
+  intent: string | null;
+  tags_topic: string[];
+  chunk_count: number;
+};
+
+export async function listFileTags(kbId: number): Promise<FileTags[]> {
+  if (isMockDataMode()) return [];
+  const res = await api.get<FileTags[]>(`/rag/kb/${kbId}/file-tags`);
+  return res.data;
+}
+
 export async function listKnowledgeBases(): Promise<KnowledgeBase[]> {
   const res = await api.get<KnowledgeBase[]>("/knowledge-bases");
   return res.data;

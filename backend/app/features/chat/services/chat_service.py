@@ -105,6 +105,13 @@ SYSTEM_PROMPT = (
     "For general document Q&A, keep the original concise document-answering "
     "behavior; do not make every response code-only. Do not change citation "
     "formatting requirements.\n\n"
+    "Document answer discipline:\n"
+    "- For questions about the user's documents, answer ONLY from the provided "
+    "`Context:`. Do not fabricate facts that are not present in it.\n"
+    "- If `Context:` is present but insufficient to answer, say so plainly "
+    "(e.g. 'the documents don't cover this' / '資料不足以回答') instead of guessing.\n"
+    "- If the question is ambiguous, ask ONE clarifying question before "
+    "answering.\n\n"
     "Be concise. Do not refuse to recall information the user has shared "
     "earlier in this conversation — the conversation history above is yours "
     "to use."
@@ -263,7 +270,6 @@ _REWRITE_SYSTEM = (
 )
 
 
-async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -> str:
 def detect_symbol_lookup(user_message: str) -> str | None:
     """Return the exact code symbol requested by a symbol lookup, if any.
 

@@ -20,8 +20,9 @@ chat_feedback_type = sa.Enum("like", "dislike", name="chat_feedback_type")
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
-    chat_feedback_type.create(bind, checkfirst=True)
+    # op.create_table below auto-emits CREATE TYPE for the enum column on
+    # Postgres; an explicit create here would duplicate it (the implicit one
+    # doesn't use checkfirst). On SQLite the enum is just VARCHAR + CHECK.
     op.create_table(
         "chat_message_feedbacks",
         sa.Column("id", sa.BigInteger, primary_key=True),

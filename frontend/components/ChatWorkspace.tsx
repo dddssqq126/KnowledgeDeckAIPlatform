@@ -7,6 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { ChatInput } from "./ChatInput";
+import { CitationList } from "./CitationList";
 import { useChatSessionsStore } from "../lib/chat-store";
 import {
   type ChatMessage,
@@ -242,16 +243,8 @@ function MessageBubble({
               {streaming ? <span className="ml-1 animate-pulse">▍</span> : null}
             </div>
           )}
-          {message.citations && message.citations.length > 0 ? (
-            <div className="mt-2 border-t border-zinc-700 pt-2 text-xs text-zinc-400">
-              Sources:{" "}
-              {message.citations.map((c, i) => (
-                <span key={c.file_id}>
-                  {i > 0 ? ", " : ""}
-                  {c.filename}
-                </span>
-              ))}
-            </div>
+          {message.citations ? (
+            <CitationList citations={message.citations} />
           ) : null}
         </div>
         <div className="flex items-center gap-2 px-1 text-[10px] text-zinc-500">
