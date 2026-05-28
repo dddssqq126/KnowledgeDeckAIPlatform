@@ -198,6 +198,41 @@ curl -X POST "http://localhost:8080/knowledge-bases/1/files" \
   -F "file=@./react_hooks.txt"
 ```
 
+### PATCH /knowledge-bases/{kb_id}/files/{file_id}/tags
+
+Override the file-level vendor/platform/category tags, then reindex that one
+file so Qdrant vectors and payload reflect the override.
+
+**Request**:
+```json
+{
+  "vendor": "advantest",
+  "platform": "v93000",
+  "knowledge_type": "internal_bkm"
+}
+```
+
+Allowed values:
+- `vendor`: `teradyne`, `advantest`, `internal`, `unknown`
+- `platform`: `ultraflex`, `j750`, `v93000`, `t2000`, `generic`, `unknown`
+- `knowledge_type`: `vendor_doc`, `internal_bkm`, `code`, `mixed`, `unknown`
+
+**Response 200**:
+```json
+{
+  "file_id": 12,
+  "doc_type": "guide",
+  "intent": "how_to",
+  "tags_topic": ["ate"],
+  "vendor": "advantest",
+  "platform": "v93000",
+  "knowledge_type": "internal_bkm",
+  "chunk_count": 8
+}
+```
+
+**Errors**: `404 not_found`, `422` validation error, `500 storage_error`
+
 ### DELETE /knowledge-bases/{kb_id}/files/{file_id}
 
 Soft-delete a file. Vectors are removed from Qdrant immediately; the MinIO object stays.

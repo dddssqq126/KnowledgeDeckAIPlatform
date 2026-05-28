@@ -98,6 +98,9 @@ class KnowledgeFile(Base):
         default=FileStatus.UPLOADED,
     )
     status_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tag_vendor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tag_platform: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tag_knowledge_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

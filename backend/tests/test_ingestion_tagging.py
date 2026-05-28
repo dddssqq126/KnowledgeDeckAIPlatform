@@ -40,7 +40,15 @@ async def test_ingest_enriches_embed_text_and_passes_tags(monkeypatch, db_sessio
     )
     monkeypatch.setattr(
         ingestion.tagger, "generate_doc_tags",
-        lambda text, filename: _coro(DocTags(topic=["billing"], doc_type="faq")),
+        lambda text, filename: _coro(
+            DocTags(
+                topic=["billing"],
+                doc_type="faq",
+                vendor="teradyne",
+                platform="ultraflex",
+                knowledge_type="vendor_doc",
+            )
+        ),
     )
 
     captured = {}
@@ -66,9 +74,16 @@ async def test_ingest_enriches_embed_text_and_passes_tags(monkeypatch, db_sessio
 
     await ingestion.ingest_file(session=db_session, file_row=file_row, data=b"raw body")
 
-    assert captured["embed_texts"][0].startswith("[topics: billing | type: faq]\n")
+    assert captured["embed_texts"][0].startswith(
+        "[topics: billing | type: faq | vendor: teradyne | "
+        "platform: ultraflex | knowledge_type: vendor_doc]\n"
+    )
     assert captured["upsert"]["chunks"][0]["text"] == "raw body"
     assert captured["upsert"]["tags"].topic == ["billing"]
+    assert captured["upsert"]["tags"].vendor == "teradyne"
+    assert file_row.tag_vendor == "teradyne"
+    assert file_row.tag_platform == "ultraflex"
+    assert file_row.tag_knowledge_type == "vendor_doc"
     assert file_row.status is FileStatus.INDEXED
 
 

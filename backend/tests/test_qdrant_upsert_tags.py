@@ -18,7 +18,15 @@ async def test_upsert_writes_tag_payload(monkeypatch) -> None:
     fake = _CapturingClient()
     monkeypatch.setattr(qdrant_store, "_client", fake, raising=False)
 
-    tags = DocTags(topic=["billing"], doc_type="faq", intent="how_to", language="en")
+    tags = DocTags(
+        topic=["billing"],
+        doc_type="faq",
+        intent="how_to",
+        language="en",
+        vendor="teradyne",
+        platform="j750",
+        knowledge_type="vendor_doc",
+    )
     await qdrant_store.upsert_chunks(
         user_id=1,
         kb_id=2,
@@ -36,3 +44,6 @@ async def test_upsert_writes_tag_payload(monkeypatch) -> None:
     assert payload["doc_type"] == "faq"
     assert payload["intent"] == "how_to"
     assert payload["language"] == "en"
+    assert payload["vendor"] == "teradyne"
+    assert payload["platform"] == "j750"
+    assert payload["knowledge_type"] == "vendor_doc"

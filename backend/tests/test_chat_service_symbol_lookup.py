@@ -1,6 +1,7 @@
 import pytest
 
 from app.features.chat.services.chat_service import (
+    detect_query_tags,
     detect_symbol_lookup,
     rewrite_for_retrieval,
 )
@@ -31,3 +32,29 @@ async def test_rewrite_for_retrieval_builds_symbol_query() -> None:
         "Find the definition, signature, implementation, usages, call sites, "
         "and related function for symbol: parse_token"
     )
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "請說明 Teradyne UltraFLEX 的 BKM",
+            ("teradyne", "ultraflex", "internal_bkm"),
+        ),
+        (
+            "艾德萬 V93000 code 哪裡處理 error?",
+            ("advantest", "v93000", "code"),
+        ),
+        (
+            "V93K vendor document",
+            ("unknown", "v93000", "unknown"),
+        ),
+        (
+            "J750 troubleshooting",
+            ("unknown", "j750", "unknown"),
+        ),
+    ],
+)
+def test_detect_query_tags(message: str, expected: tuple[str, str, str]) -> None:
+    tags = detect_query_tags(message)
+    assert (tags.vendor, tags.platform, tags.knowledge_type) == expected

@@ -46,6 +46,9 @@ async def test_can_create_kb_and_file(db_session) -> None:
     assert f.id is not None
     assert f.deleted_at is None
     assert f.status is FileStatus.UPLOADED
+    assert f.tag_vendor is None
+    assert f.tag_platform is None
+    assert f.tag_knowledge_type is None
 
 
 @pytest.mark.asyncio

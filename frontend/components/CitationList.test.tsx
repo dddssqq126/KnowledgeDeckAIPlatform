@@ -18,6 +18,25 @@ describe("CitationList", () => {
     expect(screen.getByText("#hpa")).toBeInTheDocument();
   });
 
+  it("renders vendor, platform, and knowledge type chips", () => {
+    render(
+      <CitationList
+        citations={[
+          {
+            file_id: 3,
+            filename: "ate.txt",
+            vendor: "advantest",
+            platform: "v93000",
+            knowledge_type: "internal_bkm",
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText("advantest")).toBeInTheDocument();
+    expect(screen.getByText("v93000")).toBeInTheDocument();
+    expect(screen.getByText("internal_bkm")).toBeInTheDocument();
+  });
+
   it("renders just the filename when no tags (back-compat)", () => {
     render(<CitationList citations={[{ file_id: 2, filename: "old.txt" }]} />);
     expect(screen.getByText("old.txt")).toBeInTheDocument();

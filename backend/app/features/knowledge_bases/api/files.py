@@ -1,5 +1,6 @@
 import io
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import (
     APIRouter,
@@ -10,7 +11,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +20,7 @@ from app.core.config import get_settings
 from app.db.base import get_db
 from app.db.models import FileStatus, KnowledgeBase, KnowledgeFile, User
 from app.features.knowledge_bases.services import file_service
+from app.features.rag.services import qdrant_store, tagger
 from app.features.rag.services import ingestion
 from app.features.knowledge_bases.services.object_storage import get_storage_client
 
@@ -37,6 +39,30 @@ class FileOut(BaseModel):
     status: str
     status_error: str | None = None
     created_at: str
+
+
+TagVendor = Literal["teradyne", "advantest", "internal", "unknown"]
+TagPlatform = Literal["ultraflex", "j750", "v93000", "t2000", "generic", "unknown"]
+TagKnowledgeType = Literal[
+    "vendor_doc", "internal_bkm", "code", "mixed", "unknown"
+]
+
+
+class FileTagPatch(BaseModel):
+    vendor: TagVendor
+    platform: TagPlatform
+    knowledge_type: TagKnowledgeType
+
+
+class FileTagOut(BaseModel):
+    file_id: int
+    doc_type: str | None = None
+    intent: str | None = None
+    tags_topic: list[str] = Field(default_factory=list)
+    vendor: str
+    platform: str
+    knowledge_type: str
+    chunk_count: int
 
 
 def _content_type_for(extension: str) -> str:
@@ -93,6 +119,43 @@ def _file_out(r: KnowledgeFile) -> FileOut:
         status=r.status.value,
         status_error=r.status_error,
         created_at=r.created_at.isoformat(),
+    )
+
+
+async def _load_owned_file(
+    session: AsyncSession, *, kb_id: int, file_id: int
+) -> KnowledgeFile:
+    row = await session.scalar(
+        select(KnowledgeFile).where(
+            KnowledgeFile.id == file_id,
+            KnowledgeFile.knowledge_base_id == kb_id,
+            KnowledgeFile.deleted_at.is_(None),
+        )
+    )
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="file_not_found")
+    return row
+
+
+async def _file_tag_out(row: KnowledgeFile) -> FileTagOut:
+    rows = await qdrant_store.list_file_tags(
+        user_id=row.owner_user_id,
+        kb_id=row.knowledge_base_id,
+    )
+    qdrant_tags = next((r for r in rows if r.get("file_id") == row.id), {})
+    return FileTagOut(
+        file_id=row.id,
+        doc_type=qdrant_tags.get("doc_type"),
+        intent=qdrant_tags.get("intent"),
+        tags_topic=qdrant_tags.get("tags_topic") or [],
+        vendor=row.tag_vendor or qdrant_tags.get("vendor") or "unknown",
+        platform=row.tag_platform or qdrant_tags.get("platform") or "unknown",
+        knowledge_type=(
+            row.tag_knowledge_type
+            or qdrant_tags.get("knowledge_type")
+            or "unknown"
+        ),
+        chunk_count=int(qdrant_tags.get("chunk_count") or 0),
     )
 
 
@@ -230,6 +293,40 @@ async def download_file(
     )
 
 
+@router.patch("/{kb_id}/files/{file_id}/tags", response_model=FileTagOut)
+async def update_file_tags(
+    kb_id: int,
+    file_id: int,
+    patch: FileTagPatch,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> FileTagOut:
+    await _load_owned_kb(session, owner_user_id=user.id, kb_id=kb_id)
+    row = await _load_owned_file(session, kb_id=kb_id, file_id=file_id)
+    if row.owner_user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="file_not_found")
+
+    row.tag_vendor = tagger.normalize_vendor(patch.vendor)
+    row.tag_platform = tagger.normalize_platform(patch.platform)
+    row.tag_knowledge_type = tagger.normalize_knowledge_type(patch.knowledge_type)
+    row.status = FileStatus.UPLOADED
+    row.status_error = None
+    await session.commit()
+    await session.refresh(row)
+
+    try:
+        data = await get_storage_client().get_object(row.storage_key)
+    except Exception:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, detail="storage_error"
+        )
+
+    await ingestion.cleanup_file_vectors(file_id=row.id)
+    await ingestion.ingest_file(session=session, file_row=row, data=data)
+    await session.refresh(row)
+    return await _file_tag_out(row)
+
+
 @router.delete("/{kb_id}/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_file(
     kb_id: int,
@@ -238,15 +335,7 @@ async def delete_file(
     session: AsyncSession = Depends(get_db),
 ) -> None:
     await _load_owned_kb(session, owner_user_id=user.id, kb_id=kb_id)
-    row = await session.scalar(
-        select(KnowledgeFile).where(
-            KnowledgeFile.id == file_id,
-            KnowledgeFile.knowledge_base_id == kb_id,
-            KnowledgeFile.deleted_at.is_(None),
-        )
-    )
-    if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="file_not_found")
+    row = await _load_owned_file(session, kb_id=kb_id, file_id=file_id)
     row.deleted_at = datetime.now(timezone.utc)
     await session.commit()
     # Best-effort Qdrant cleanup; failures are logged and ignored.

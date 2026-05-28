@@ -422,14 +422,12 @@ async def stream_chat(
             context = ""
             rag_query: str | None = None
             code_assist_intent: str | None = None
+            query_tags: chat_service.QueryTags | None = None
             if use_rag:
                 # Multi-turn follow-ups ("and Python?", "what about that one?")
                 # are not standalone — embedding them directly drags retrieval
                 # off-topic. Rewriter resolves references against history into
                 # a self-contained query before we hit the vector store.
-                rag_query = await chat_service.rewrite_for_retrieval(
-                    history=history, user_message=user_message
-                )
                 code_assist_intent = _detect_code_assist_intent(user_message)
                 code_intent = chat_service.detect_code_assist_intent(user_message)
                 if code_intent is not None:
@@ -448,6 +446,7 @@ async def stream_chat(
                     rag_query = await chat_service.rewrite_for_retrieval(
                         history=history, user_message=user_message
                     )
+                query_tags = chat_service.detect_query_tags(user_message, rag_query)
                 context, citations = await rag.retrieve_context(
                     user_id=user_id, kb_ids=kb_ids, query=rag_query
                 )
@@ -459,6 +458,7 @@ async def stream_chat(
                 context=context,
                 rag_query=rag_query,
                 code_assist_intent=code_assist_intent,
+                query_tags=query_tags,
             ):
                 collected.append(token)
                 yield _sse("token", {"text": token})

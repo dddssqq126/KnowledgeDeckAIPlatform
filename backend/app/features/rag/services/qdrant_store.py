@@ -85,7 +85,15 @@ async def ensure_collection() -> None:
                 field_name=field,
                 field_schema=qm.PayloadSchemaType.INTEGER,
             )
-        for field in ("doc_type", "intent", "tags_topic", "language"):
+        for field in (
+            "doc_type",
+            "intent",
+            "tags_topic",
+            "language",
+            "vendor",
+            "platform",
+            "knowledge_type",
+        ):
             client.create_payload_index(
                 collection_name=s.qdrant_collection,
                 field_name=field,
@@ -151,6 +159,9 @@ async def upsert_chunks(
                     "doc_type": tags.doc_type,
                     "intent": tags.intent,
                     "language": tags.language,
+                    "vendor": tags.vendor,
+                    "platform": tags.platform,
+                    "knowledge_type": tags.knowledge_type,
                 },
             )
             for chunk, dense, sparse in zip(
@@ -249,10 +260,10 @@ async def hybrid_search(
 async def list_file_tags(*, user_id: int, kb_id: int) -> list[dict[str, Any]]:
     """Per-file tag summary for one KB, read from the Qdrant payload.
 
-    Returns one dict per file_id: {file_id, doc_type, intent, tags_topic,
-    chunk_count}. Tags are per-document, so they're taken from the first point
-    seen for each file; chunk_count counts that file's points. Returns [] when
-    the collection does not exist yet.
+    Returns one dict per file_id with tag fields and chunk_count. Tags are
+    per-document, so they're taken from the first point seen for each file;
+    chunk_count counts that file's points. Returns [] when the collection does
+    not exist yet.
     """
     s = get_settings()
 
@@ -289,6 +300,9 @@ async def list_file_tags(*, user_id: int, kb_id: int) -> list[dict[str, Any]]:
                         "doc_type": pl.get("doc_type"),
                         "intent": pl.get("intent"),
                         "tags_topic": pl.get("tags_topic") or [],
+                        "vendor": pl.get("vendor") or "unknown",
+                        "platform": pl.get("platform") or "unknown",
+                        "knowledge_type": pl.get("knowledge_type") or "unknown",
                         "chunk_count": 1,
                     }
                 else:

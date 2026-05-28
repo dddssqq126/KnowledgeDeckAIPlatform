@@ -15,6 +15,9 @@ async def test_citations_include_tag_fields(monkeypatch) -> None:
             "doc_type": "guide",
             "tags_topic": ["kubernetes", "hpa"],
             "intent": "how_to",
+            "vendor": "teradyne",
+            "platform": "j750",
+            "knowledge_type": "vendor_doc",
         },
     }
 
@@ -44,5 +47,35 @@ async def test_citations_include_tag_fields(monkeypatch) -> None:
             "filename": "k8s.txt",
             "doc_type": "guide",
             "tags_topic": ["kubernetes", "hpa"],
+            "vendor": "teradyne",
+            "platform": "j750",
+            "knowledge_type": "vendor_doc",
         }
     ]
+
+
+def test_context_includes_source_metadata() -> None:
+    context = rag._format_context(
+        [
+            {
+                "payload": {
+                    "filename": "advantest-bkm.txt",
+                    "page_number": 3,
+                    "text": "calibration steps",
+                    "vendor": "advantest",
+                    "platform": "v93000",
+                    "knowledge_type": "internal_bkm",
+                    "doc_type": "guide",
+                    "tags_topic": ["calibration", "ate"],
+                }
+            }
+        ]
+    )
+
+    assert "[1] source_id=1 filename=advantest-bkm.txt (p.3)" in context
+    assert "vendor=advantest" in context
+    assert "platform=v93000" in context
+    assert "knowledge_type=internal_bkm" in context
+    assert "doc_type=guide" in context
+    assert "topic=calibration,ate" in context
+    assert "calibration steps" in context

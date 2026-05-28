@@ -22,7 +22,16 @@ async def two_users_kb(db_session):
 @pytest.mark.asyncio
 async def test_file_tags_returns_tags_for_owner(http_client, two_users_kb, monkeypatch):
     alice, _bob, kb = two_users_kb
-    rows = [{"file_id": 7, "doc_type": "guide", "intent": "how_to", "tags_topic": ["k8s"], "chunk_count": 3}]
+    rows = [{
+        "file_id": 7,
+        "doc_type": "guide",
+        "intent": "how_to",
+        "tags_topic": ["k8s"],
+        "vendor": "teradyne",
+        "platform": "ultraflex",
+        "knowledge_type": "vendor_doc",
+        "chunk_count": 3,
+    }]
 
     async def fake_list(*, user_id, kb_id):
         assert user_id == alice.id and kb_id == kb.id

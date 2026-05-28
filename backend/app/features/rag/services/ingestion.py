@@ -17,7 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.models import FileStatus, KnowledgeFile
-from app.features.rag.services import document_parser, qdrant_store, sparse_embed, tagger, text_splitter
+from app.features.rag.services import (
+    document_parser,
+    qdrant_store,
+    sparse_embed,
+    tagger,
+    text_splitter,
+)
 from app.features.rag.services.model_clients import EmbeddingClient
 
 logger = logging.getLogger(__name__)
@@ -87,6 +93,14 @@ async def ingest_file(
             tags = await tagger.generate_doc_tags(full_text, file_row.filename)
         else:
             tags = tagger.DocTags.empty()
+        tags = tags.with_overrides(
+            vendor=file_row.tag_vendor,
+            platform=file_row.tag_platform,
+            knowledge_type=file_row.tag_knowledge_type,
+        )
+        file_row.tag_vendor = tags.vendor
+        file_row.tag_platform = tags.platform
+        file_row.tag_knowledge_type = tags.knowledge_type
 
         await qdrant_store.ensure_collection()
         raw_texts = [c["text"] for c in chunks]

@@ -12,6 +12,7 @@ import {
   listFiles,
   listKnowledgeBases,
   uploadFile,
+  updateFileTags,
 } from "./knowledge-bases";
 
 vi.mock("./download", () => ({
@@ -94,6 +95,36 @@ describe("knowledge-bases API client", () => {
   it("deleteFile hits DELETE /knowledge-bases/:kb/files/:file", async () => {
     mock.onDelete("/knowledge-bases/3/files/9").reply(204);
     await deleteFile(3, 9);
+  });
+
+  it("updateFileTags PATCHes canonical tag values", async () => {
+    mock.onPatch("/knowledge-bases/3/files/9/tags").reply((config) => {
+      expect(JSON.parse(config.data)).toEqual({
+        vendor: "advantest",
+        platform: "v93000",
+        knowledge_type: "internal_bkm",
+      });
+      return [200, {
+        file_id: 9,
+        doc_type: "guide",
+        intent: "how_to",
+        tags_topic: ["ate"],
+        vendor: "advantest",
+        platform: "v93000",
+        knowledge_type: "internal_bkm",
+        chunk_count: 2,
+      }];
+    });
+
+    const out = await updateFileTags(3, 9, {
+      vendor: "advantest",
+      platform: "v93000",
+      knowledge_type: "internal_bkm",
+    });
+
+    expect(out.vendor).toBe("advantest");
+    expect(out.platform).toBe("v93000");
+    expect(out.knowledge_type).toBe("internal_bkm");
   });
 
   it("downloadKnowledgeFile downloads the file returned by the backend", async () => {

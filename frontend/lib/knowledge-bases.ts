@@ -38,17 +38,51 @@ export type KnowledgeFile = {
   created_at: string;
 };
 
+export type TagVendor = "teradyne" | "advantest" | "internal" | "unknown";
+export type TagPlatform =
+  | "ultraflex"
+  | "j750"
+  | "v93000"
+  | "t2000"
+  | "generic"
+  | "unknown";
+export type TagKnowledgeType =
+  | "vendor_doc"
+  | "internal_bkm"
+  | "code"
+  | "mixed"
+  | "unknown";
+
 export type FileTags = {
   file_id: number;
   doc_type: string | null;
   intent: string | null;
   tags_topic: string[];
+  vendor: TagVendor;
+  platform: TagPlatform;
+  knowledge_type: TagKnowledgeType;
   chunk_count: number;
 };
 
 export async function listFileTags(kbId: number): Promise<FileTags[]> {
   if (isMockDataMode()) return [];
   const res = await api.get<FileTags[]>(`/rag/kb/${kbId}/file-tags`);
+  return res.data;
+}
+
+export async function updateFileTags(
+  kbId: number,
+  fileId: number,
+  input: {
+    vendor: TagVendor;
+    platform: TagPlatform;
+    knowledge_type: TagKnowledgeType;
+  },
+): Promise<FileTags> {
+  const res = await api.patch<FileTags>(
+    `/knowledge-bases/${kbId}/files/${fileId}/tags`,
+    input,
+  );
   return res.data;
 }
 

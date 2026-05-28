@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # rag_rerank_min_score: cross-encoder score threshold; below this the
     #   rerank result is treated as "no relevant context".
     rag_dense_top_k: int = 20
-    rag_final_top_k: int = 5
+    rag_final_top_k: int = 7
     rag_min_score: float = 0.30
     rag_rerank_min_score: float = 0.10
 

@@ -10,6 +10,9 @@ export type Citation = {
   filename: string;
   doc_type?: string | null;
   tags_topic?: string[];
+  vendor?: string;
+  platform?: string;
+  knowledge_type?: string;
 };
 
 export type ChatSession = {

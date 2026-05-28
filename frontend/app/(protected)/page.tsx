@@ -384,6 +384,21 @@ function CitationList({ citations }: { citations: Citation[] }) {
                 {citation.doc_type}
               </span>
             ) : null}
+            {citation.vendor && citation.vendor !== "unknown" ? (
+              <span className="rounded bg-amber-50 px-1 text-[10px] text-amber-700">
+                {citation.vendor}
+              </span>
+            ) : null}
+            {citation.platform && citation.platform !== "unknown" ? (
+              <span className="rounded bg-cyan-50 px-1 text-[10px] text-cyan-700">
+                {citation.platform}
+              </span>
+            ) : null}
+            {citation.knowledge_type && citation.knowledge_type !== "unknown" ? (
+              <span className="rounded bg-violet-50 px-1 text-[10px] text-violet-700">
+                {citation.knowledge_type}
+              </span>
+            ) : null}
             {(citation.tags_topic ?? []).map((t) => (
               <span key={t} className="text-[10px] text-muted-foreground">
                 #{t}

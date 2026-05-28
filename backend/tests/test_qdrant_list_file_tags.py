@@ -22,7 +22,15 @@ class _ScrollClient:
 @pytest.mark.asyncio
 async def test_list_file_tags_aggregates_by_file(monkeypatch) -> None:
     points = [
-        _FakePoint({"file_id": 7, "doc_type": "guide", "intent": "how_to", "tags_topic": ["k8s"]}),
+        _FakePoint({
+            "file_id": 7,
+            "doc_type": "guide",
+            "intent": "how_to",
+            "tags_topic": ["k8s"],
+            "vendor": "advantest",
+            "platform": "v93000",
+            "knowledge_type": "internal_bkm",
+        }),
         _FakePoint({"file_id": 7, "doc_type": "guide", "intent": "how_to", "tags_topic": ["k8s"]}),
         _FakePoint({"file_id": 9, "doc_type": "code", "intent": "conceptual", "tags_topic": ["rag"]}),
     ]
@@ -31,7 +39,16 @@ async def test_list_file_tags_aggregates_by_file(monkeypatch) -> None:
     rows = await qdrant_store.list_file_tags(user_id=1, kb_id=2)
     by_id = {r["file_id"]: r for r in rows}
 
-    assert by_id[7] == {"file_id": 7, "doc_type": "guide", "intent": "how_to", "tags_topic": ["k8s"], "chunk_count": 2}
+    assert by_id[7] == {
+        "file_id": 7,
+        "doc_type": "guide",
+        "intent": "how_to",
+        "tags_topic": ["k8s"],
+        "vendor": "advantest",
+        "platform": "v93000",
+        "knowledge_type": "internal_bkm",
+        "chunk_count": 2,
+    }
     assert by_id[9]["chunk_count"] == 1
 
 

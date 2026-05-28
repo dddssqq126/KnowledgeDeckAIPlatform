@@ -1,16 +1,20 @@
 "use client";
 
-import { Database, Download, FileText, Search } from "lucide-react";
+import { Check, Database, Download, FileText, Pencil, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
   type FileTags,
   type KnowledgeBase,
   type KnowledgeFile,
+  type TagKnowledgeType,
+  type TagPlatform,
+  type TagVendor,
   downloadKnowledgeFile,
   listFileTags,
   listFiles,
   listKnowledgeBases,
+  updateFileTags,
 } from "../../../lib/knowledge-bases";
 
 type RagDatabase = KnowledgeBase & {
@@ -25,6 +29,30 @@ type FilteredRagDatabase = RagDatabase & {
   database_matches: boolean;
 };
 
+const VENDOR_OPTIONS: TagVendor[] = ["teradyne", "advantest", "internal", "unknown"];
+const PLATFORM_OPTIONS: TagPlatform[] = [
+  "ultraflex",
+  "j750",
+  "v93000",
+  "t2000",
+  "generic",
+  "unknown",
+];
+const KNOWLEDGE_TYPE_OPTIONS: TagKnowledgeType[] = [
+  "vendor_doc",
+  "internal_bkm",
+  "code",
+  "mixed",
+  "unknown",
+];
+
+type TagDraft = {
+  fileId: number;
+  vendor: TagVendor;
+  platform: TagPlatform;
+  knowledge_type: TagKnowledgeType;
+};
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -36,6 +64,8 @@ export default function RagDatabasesPage() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tagDraft, setTagDraft] = useState<TagDraft | null>(null);
+  const [savingTagId, setSavingTagId] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,9 +119,23 @@ export default function RagDatabasesPage() {
           ? db.name.toLowerCase().includes(normalized)
           : false;
         const visibleFiles = normalized
-          ? db.files.filter((file) =>
-              file.filename.toLowerCase().includes(normalized),
-            )
+          ? db.files.filter((file) => {
+              const tags = db.fileTags.get(file.id);
+              const tagHaystack = tags
+                ? [
+                    tags.vendor,
+                    tags.platform,
+                    tags.knowledge_type,
+                    tags.doc_type,
+                    tags.intent,
+                    ...tags.tags_topic,
+                  ].join(" ")
+                : "";
+              return (
+                file.filename.toLowerCase().includes(normalized) ||
+                tagHaystack.toLowerCase().includes(normalized)
+              );
+            })
           : db.files;
         return {
           ...db,
@@ -112,6 +156,47 @@ export default function RagDatabasesPage() {
       window.alert(
         err instanceof Error ? err.message : "Failed to download file",
       );
+    }
+  }
+
+  function startTagEdit(fileId: number, current?: FileTags) {
+    setTagDraft({
+      fileId,
+      vendor: current?.vendor ?? "unknown",
+      platform: current?.platform ?? "unknown",
+      knowledge_type: current?.knowledge_type ?? "unknown",
+    });
+  }
+
+  async function handleSaveTags(dbId: number, fileId: number) {
+    if (!tagDraft || tagDraft.fileId !== fileId) return;
+    setSavingTagId(fileId);
+    try {
+      const updated = await updateFileTags(dbId, fileId, {
+        vendor: tagDraft.vendor,
+        platform: tagDraft.platform,
+        knowledge_type: tagDraft.knowledge_type,
+      });
+      setDatabases((current) =>
+        current.map((db) => {
+          if (db.id !== dbId) return db;
+          const fileTags = new Map(db.fileTags);
+          fileTags.set(fileId, updated);
+          return {
+            ...db,
+            fileTags,
+            vector_count: Array.from(fileTags.values()).reduce(
+              (sum, t) => sum + t.chunk_count,
+              0,
+            ),
+          };
+        }),
+      );
+      setTagDraft(null);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Failed to update tags");
+    } finally {
+      setSavingTagId(null);
     }
   }
 
@@ -213,23 +298,17 @@ export default function RagDatabasesPage() {
                                 {file.filename}
                               </span>
                             </div>
-                            {(() => {
-                              const t = db.fileTags.get(file.id);
-                              if (!t) return null;
-                              return (
-                                <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px]">
-                                  {t.doc_type ? (
-                                    <span className="rounded bg-emerald-50 px-1 text-emerald-700">{t.doc_type}</span>
-                                  ) : null}
-                                  {t.intent ? (
-                                    <span className="rounded bg-sky-50 px-1 text-sky-700">{t.intent}</span>
-                                  ) : null}
-                                  {t.tags_topic.map((tp) => (
-                                    <span key={tp} className="text-muted-foreground">#{tp}</span>
-                                  ))}
-                                </div>
-                              );
-                            })()}
+                            <FileTagRow
+                              tags={db.fileTags.get(file.id)}
+                              draft={
+                                tagDraft?.fileId === file.id ? tagDraft : null
+                              }
+                              saving={savingTagId === file.id}
+                              onEdit={() => startTagEdit(file.id, db.fileTags.get(file.id))}
+                              onCancel={() => setTagDraft(null)}
+                              onDraftChange={(draft) => setTagDraft(draft)}
+                              onSave={() => void handleSaveTags(db.id, file.id)}
+                            />
                           </div>
                           <div className="flex shrink-0 items-center gap-3 text-muted-foreground">
                             <span>{file.extension.toUpperCase()}</span>
@@ -257,6 +336,143 @@ export default function RagDatabasesPage() {
       </div>
     </section>
   );
+}
+
+function FileTagRow({
+  tags,
+  draft,
+  saving,
+  onEdit,
+  onCancel,
+  onDraftChange,
+  onSave,
+}: {
+  tags?: FileTags;
+  draft: TagDraft | null;
+  saving: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onDraftChange: (draft: TagDraft) => void;
+  onSave: () => void;
+}) {
+  if (draft) {
+    return (
+      <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
+        <TagSelect
+          ariaLabel="Vendor"
+          value={draft.vendor}
+          options={VENDOR_OPTIONS}
+          onChange={(vendor) => onDraftChange({ ...draft, vendor })}
+        />
+        <TagSelect
+          ariaLabel="Platform"
+          value={draft.platform}
+          options={PLATFORM_OPTIONS}
+          onChange={(platform) => onDraftChange({ ...draft, platform })}
+        />
+        <TagSelect
+          ariaLabel="Knowledge type"
+          value={draft.knowledge_type}
+          options={KNOWLEDGE_TYPE_OPTIONS}
+          onChange={(knowledge_type) =>
+            onDraftChange({ ...draft, knowledge_type })
+          }
+        />
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={saving}
+          aria-label="Save tags"
+          title="Save tags"
+          className="rounded border border-border p-1 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+        >
+          <Check className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          aria-label="Cancel tag edit"
+          title="Cancel tag edit"
+          className="rounded border border-border p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </div>
+    );
+  }
+
+  if (!tags) return null;
+  return (
+    <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px]">
+      {tags.vendor !== "unknown" ? (
+        <TagChip tone="amber">{tags.vendor}</TagChip>
+      ) : null}
+      {tags.platform !== "unknown" ? (
+        <TagChip tone="cyan">{tags.platform}</TagChip>
+      ) : null}
+      {tags.knowledge_type !== "unknown" ? (
+        <TagChip tone="violet">{tags.knowledge_type}</TagChip>
+      ) : null}
+      {tags.doc_type ? <TagChip tone="emerald">{tags.doc_type}</TagChip> : null}
+      {tags.intent ? <TagChip tone="sky">{tags.intent}</TagChip> : null}
+      {tags.tags_topic.map((tp) => (
+        <span key={tp} className="text-muted-foreground">#{tp}</span>
+      ))}
+      <button
+        type="button"
+        onClick={onEdit}
+        aria-label="Edit tags"
+        title="Edit tags"
+        className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+      >
+        <Pencil className="h-3 w-3" />
+      </button>
+    </div>
+  );
+}
+
+function TagSelect<T extends string>({
+  ariaLabel,
+  value,
+  options,
+  onChange,
+}: {
+  ariaLabel: string;
+  value: T;
+  options: T[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <select
+      aria-label={ariaLabel}
+      value={value}
+      onChange={(event) => onChange(event.target.value as T)}
+      className="h-7 rounded border border-border bg-white px-1 text-[10px] text-foreground"
+    >
+      {options.map((option) => (
+        <option key={option} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function TagChip({
+  children,
+  tone,
+}: {
+  children: string;
+  tone: "amber" | "cyan" | "violet" | "emerald" | "sky";
+}) {
+  const classes = {
+    amber: "bg-amber-50 text-amber-700",
+    cyan: "bg-cyan-50 text-cyan-700",
+    violet: "bg-violet-50 text-violet-700",
+    emerald: "bg-emerald-50 text-emerald-700",
+    sky: "bg-sky-50 text-sky-700",
+  };
+  return <span className={`rounded px-1 ${classes[tone]}`}>{children}</span>;
 }
 
 function Metric({ label, value }: { label: string; value: number | string }) {

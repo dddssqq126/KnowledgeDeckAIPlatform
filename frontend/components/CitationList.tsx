@@ -14,6 +14,21 @@ export function CitationList({ citations }: { citations: Citation[] }) {
               {c.doc_type}
             </span>
           ) : null}
+          {c.vendor && c.vendor !== "unknown" ? (
+            <span className="ml-1 rounded bg-amber-900/50 px-1 text-[10px] text-amber-100">
+              {c.vendor}
+            </span>
+          ) : null}
+          {c.platform && c.platform !== "unknown" ? (
+            <span className="ml-1 rounded bg-cyan-900/50 px-1 text-[10px] text-cyan-100">
+              {c.platform}
+            </span>
+          ) : null}
+          {c.knowledge_type && c.knowledge_type !== "unknown" ? (
+            <span className="ml-1 rounded bg-violet-900/50 px-1 text-[10px] text-violet-100">
+              {c.knowledge_type}
+            </span>
+          ) : null}
           {(c.tags_topic ?? []).map((t) => (
             <span key={t} className="ml-1 text-[10px] text-zinc-500">
               #{t}
