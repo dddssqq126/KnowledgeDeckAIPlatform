@@ -26,7 +26,7 @@ _INTENTS = {"how_to", "troubleshooting", "conceptual", "policy"}
 VENDORS = {"teradyne", "advantest", "internal", "unknown"}
 PLATFORMS = {"ultraflex", "j750", "v93000", "t2000", "generic", "unknown"}
 KNOWLEDGE_TYPES = {"vendor_doc", "internal_bkm", "code", "mixed", "unknown"}
-_MAX_TOPICS = 5
+_MAX_TOPICS = 10
 _MAX_TAG_VALUE_CHARS = 64
 _TAG_VALUE_RE = re.compile(r"[^a-z0-9._+/#]+")
 
@@ -222,7 +222,7 @@ def enrich_text_for_embedding(text: str, tags: DocTags) -> str:
 _TAGGER_SYSTEM = (
     "You label a document for a retrieval system. Read the document and reply "
     "with ONLY a JSON object, no prose, no code fence, with keys:\n"
-    '  "topic": array of 2-5 short lowercase topic keywords,\n'
+    '  "topic": array of 3-10 short lowercase topic keywords,\n'
     f'  "doc_type": one of {sorted(_DOC_TYPES)},\n'
     f'  "intent": one of {sorted(_INTENTS)},\n'
     '  "vendor": a concise lowercase source/organization/domain tag,\n'
@@ -232,12 +232,19 @@ _TAGGER_SYSTEM = (
     "Prefer known ATE values when they fit: "
     f"vendor={sorted(VENDORS)}, platform={sorted(PLATFORMS)}, "
     f"knowledge_type={sorted(KNOWLEDGE_TYPES)}. "
-    "For non-ATE standards or protocol documents, infer useful tags instead "
-    "of forcing unknown; examples: vendor=3gpp or ieee, platform=5g_nr or "
-    "802.11ax, knowledge_type=standard or specification. Use vendor_doc for "
-    "vendor manuals, internal_bkm for company BKM, code for source code, mixed "
-    "when multiple categories are central. If truly unsure, use unknown. If "
-    "unsure about doc_type or intent, omit that key. Output JSON only."
+    "Do not limit tags to ATE vendors, instruments, 5G, or any predefined "
+    "domain. When the document gives enough evidence, infer useful tags for "
+    "any source organization, standard body, product, platform, protocol, "
+    "technology, API, workflow, business process, feature, file format, or "
+    "document category. Put as many meaningful, retrieval-helpful subjects as "
+    "possible in topic, up to the 10-topic limit; prefer specific terms over "
+    "generic ones and avoid duplicates. Use vendor_doc for vendor manuals, "
+    "internal_bkm for company BKM, code for source code, mixed when multiple "
+    "categories are central, or a concise inferred category such as standard, "
+    "specification, test_plan, architecture, tutorial, policy, report, or "
+    "datasheet when that is more accurate. If truly unsure about a field, use "
+    "unknown. If unsure about doc_type or intent, omit that key. Output JSON "
+    "only."
 )
 
 
@@ -249,7 +256,7 @@ def _build_tagger_llm() -> ChatOpenAI:
         api_key=s.llm_api_key,
         streaming=False,
         temperature=0,
-        max_tokens=256,
+        max_tokens=384,
     )
 
 

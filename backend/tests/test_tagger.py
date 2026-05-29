@@ -1,5 +1,6 @@
 from app.features.rag.services.tagger import (
     DocTags,
+    _TAGGER_SYSTEM,
     _parse_tags,
     enrich_text_for_embedding,
 )
@@ -64,10 +65,16 @@ def test_parse_can_tag_5g_documents() -> None:
     assert tags.knowledge_type == "specification"
 
 
-def test_parse_caps_topics_at_five() -> None:
-    raw = '{"topic": ["a", "b", "c", "d", "e", "f", "g"]}'
+def test_parse_caps_topics_at_ten() -> None:
+    raw = '{"topic": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"]}'
     tags = _parse_tags(raw)
-    assert tags.topic == ["a", "b", "c", "d", "e"]
+    assert tags.topic == ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
+
+
+def test_tagger_system_encourages_broad_topic_inference() -> None:
+    assert "Do not limit tags to ATE vendors" in _TAGGER_SYSTEM
+    assert "any source organization" in _TAGGER_SYSTEM
+    assert "up to the 10-topic limit" in _TAGGER_SYSTEM
 
 
 def test_parse_garbage_returns_empty() -> None:
