@@ -61,15 +61,72 @@ def _build_chunks(
     return out
 
 
+def _embedding_batches(
+    texts: list[str], *, max_count: int, max_chars: int
+) -> list[list[str]]:
+    """Split embedding inputs by item count and total character budget."""
+    batches: list[list[str]] = []
+    current: list[str] = []
+    current_chars = 0
+    max_count = max(1, max_count)
+    max_chars = max(1, max_chars)
+
+    for text in texts:
+        text_chars = len(text)
+        would_exceed_count = len(current) >= max_count
+        would_exceed_chars = current and current_chars + text_chars > max_chars
+        if would_exceed_count or would_exceed_chars:
+            batches.append(current)
+            current = []
+            current_chars = 0
+        current.append(text)
+        current_chars += text_chars
+
+    if current:
+        batches.append(current)
+    return batches
+
+
+async def _embed_batch_with_auto_split(
+    client: EmbeddingClient, texts: list[str]
+) -> list[list[float]]:
+    """Embed a batch, recursively bisecting it if the provider rejects it.
+
+    Large documents can still hit provider/proxy limits even after normal
+    batching. When that happens, split the failed batch in half and retry each
+    side so one oversized request does not fail the whole file.
+    """
+    try:
+        response = await client.create_embeddings(texts)
+    except Exception as exc:
+        if len(texts) <= 1:
+            raise
+        midpoint = len(texts) // 2
+        logger.warning(
+            "embedding_batch_failed_splitting batch_size=%s left=%s right=%s error=%s",
+            len(texts),
+            midpoint,
+            len(texts) - midpoint,
+            exc,
+        )
+        left = await _embed_batch_with_auto_split(client, texts[:midpoint])
+        right = await _embed_batch_with_auto_split(client, texts[midpoint:])
+        return left + right
+
+    # OpenAI-compatible embedding response: {"data": [{"embedding": [...]}, ...]}
+    return [item["embedding"] for item in response["data"]]
+
+
 async def _embed(texts: list[str]) -> list[list[float]]:
     client = _build_embedding_client()
     s = get_settings()
-    batch_size = max(1, s.embedding_batch_size)
     vectors: list[list[float]] = []
-    for start in range(0, len(texts), batch_size):
-        response = await client.create_embeddings(texts[start : start + batch_size])
-        # OpenAI-compatible embedding response: {"data": [{"embedding": [...]}, ...]}
-        vectors.extend(item["embedding"] for item in response["data"])
+    for batch in _embedding_batches(
+        texts,
+        max_count=s.embedding_batch_size,
+        max_chars=s.embedding_batch_max_chars,
+    ):
+        vectors.extend(await _embed_batch_with_auto_split(client, batch))
     return vectors
 
 

@@ -11,6 +11,7 @@ def test_settings_defaults_match_local_development() -> None:
     assert settings.embedding_base_url == "http://knowledgedeck_vllm_embedding:8001/v1"
     assert settings.embedding_model == "BAAI/bge-m3"
     assert settings.embedding_batch_size == 32
+    assert settings.embedding_batch_max_chars == 24_000
     assert settings.gpu_device == "0"
     assert settings.database_url == ("sqlite+aiosqlite:///./knowledgedeck.db")
     assert settings.initial_user_username == ""

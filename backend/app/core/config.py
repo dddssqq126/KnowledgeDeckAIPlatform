@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # Batch large document embedding requests so one huge file does not create
     # a single long-running HTTP call that is likely to time out.
     embedding_batch_size: int = 32
+    # Also cap the total characters per embedding request. If a provider still
+    # rejects/times out on a batch, ingestion automatically bisects that batch.
+    embedding_batch_max_chars: int = 24_000
 
     # Local disk mode (no Qdrant server process): set qdrant_path and leave
     # qdrant_url empty. If qdrant_path is empty, url mode is used.

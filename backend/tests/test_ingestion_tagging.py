@@ -181,3 +181,50 @@ async def test_embed_batches_large_documents(monkeypatch) -> None:
 
     assert calls == [["a", "b"], ["c", "d"], ["e"]]
     assert vectors == [[1.0, 0.0], [1.0, 1.0], [2.0, 0.0], [2.0, 1.0], [3.0, 0.0]]
+
+
+def test_embedding_batches_respect_character_limit() -> None:
+    batches = ingestion._embedding_batches(
+        ["aa", "bbb", "c", "dddd", "ee"],
+        max_count=10,
+        max_chars=5,
+    )
+
+    assert batches == [["aa", "bbb"], ["c", "dddd"], ["ee"]]
+
+
+@pytest.mark.asyncio
+async def test_embed_auto_splits_failed_batches(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    calls: list[list[str]] = []
+
+    class _FakeEmbeddingClient:
+        async def create_embeddings(self, texts):
+            batch = list(texts)
+            calls.append(batch)
+            if len(batch) > 1:
+                raise TimeoutError("batch too large")
+            return {"data": [{"embedding": [float(ord(batch[0]) - ord("a"))]}]}
+
+    monkeypatch.setattr(
+        ingestion,
+        "get_settings",
+        lambda: Settings(embedding_batch_size=4, embedding_batch_max_chars=999),
+    )
+    monkeypatch.setattr(
+        ingestion, "_build_embedding_client", lambda: _FakeEmbeddingClient()
+    )
+
+    vectors = await ingestion._embed(["a", "b", "c", "d"])
+
+    assert calls == [
+        ["a", "b", "c", "d"],
+        ["a", "b"],
+        ["a"],
+        ["b"],
+        ["c", "d"],
+        ["c"],
+        ["d"],
+    ]
+    assert vectors == [[0.0], [1.0], [2.0], [3.0]]
