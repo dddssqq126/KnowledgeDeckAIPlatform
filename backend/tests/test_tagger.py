@@ -1,8 +1,12 @@
+import pytest
+
+from app.features.rag.services import tagger as tagger_mod
 from app.features.rag.services.tagger import (
     DocTags,
     _TAGGER_SYSTEM,
     _parse_tags,
     enrich_text_for_embedding,
+    ensure_document_tags,
 )
 
 
@@ -75,6 +79,7 @@ def test_tagger_system_encourages_broad_topic_inference() -> None:
     assert "Do not limit tags to ATE vendors" in _TAGGER_SYSTEM
     assert "any source organization" in _TAGGER_SYSTEM
     assert "up to the 10-topic limit" in _TAGGER_SYSTEM
+    assert "Every document must receive tags" in _TAGGER_SYSTEM
 
 
 def test_parse_garbage_returns_empty() -> None:
@@ -129,21 +134,33 @@ def test_parse_normalizes_platform_aliases() -> None:
     assert tags.knowledge_type == "internal_bkm"
 
 
-import pytest
-
-from app.features.rag.services import tagger as tagger_mod
+def test_ensure_document_tags_adds_deterministic_fallbacks() -> None:
+    tags = ensure_document_tags(
+        DocTags.empty(),
+        "Matter bridge commissioning standard for IoT devices",
+        "Matter-Bridge-Setup.pdf",
+    )
+    assert tags.topic[:3] == ["matter_bridge_setup", "matter", "bridge"]
+    assert tags.doc_type == "guide"
+    assert tags.knowledge_type == "standard"
 
 
 @pytest.mark.asyncio
-async def test_generate_doc_tags_returns_empty_on_llm_error(monkeypatch) -> None:
+async def test_generate_doc_tags_returns_fallback_tags_on_llm_error(
+    monkeypatch,
+) -> None:
     class _BoomLLM:
         async def ainvoke(self, _messages):
             raise RuntimeError("vllm down")
 
     monkeypatch.setattr(tagger_mod, "_build_tagger_llm", lambda: _BoomLLM())
 
-    tags = await tagger_mod.generate_doc_tags("some document text", "doc.txt")
-    assert tags == DocTags.empty()
+    tags = await tagger_mod.generate_doc_tags(
+        "PCIe troubleshooting runbook", "PCIe-Troubleshooting-Runbook.txt"
+    )
+    assert tags.topic[:3] == ["pcie_troubleshooting_runbook", "pcie", "troubleshooting"]
+    assert tags.doc_type == "reference"
+    assert tags.knowledge_type == "document"
 
 
 @pytest.mark.asyncio
@@ -173,3 +190,23 @@ async def test_generate_doc_tags_parses_llm_output(monkeypatch) -> None:
     assert tags.platform == "generic"
     assert tags.knowledge_type == "code"
     assert any("kubernetes setup guide" in str(m.content) for m in fake.seen)
+
+
+@pytest.mark.asyncio
+async def test_generate_doc_tags_fills_missing_llm_fields(monkeypatch) -> None:
+    class _FakeResult:
+        content = '{"vendor": "ETSI"}'
+
+    class _FakeLLM:
+        async def ainvoke(self, _messages):
+            return _FakeResult()
+
+    monkeypatch.setattr(tagger_mod, "_build_tagger_llm", lambda: _FakeLLM())
+
+    tags = await tagger_mod.generate_doc_tags(
+        "OpenAPI payment authorization workflow", "payment-api-guide.md"
+    )
+    assert tags.vendor == "etsi"
+    assert tags.topic[:3] == ["payment_api_guide", "openapi", "payment"]
+    assert tags.doc_type == "api"
+    assert tags.knowledge_type == "document"

@@ -29,6 +29,34 @@ KNOWLEDGE_TYPES = {"vendor_doc", "internal_bkm", "code", "mixed", "unknown"}
 _MAX_TOPICS = 10
 _MAX_TAG_VALUE_CHARS = 64
 _TAG_VALUE_RE = re.compile(r"[^a-z0-9._+/#]+")
+_TOPIC_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9._+/#]{1,63}")
+_STOPWORD_TOPICS = {
+    "about",
+    "and",
+    "are",
+    "com",
+    "doc",
+    "docs",
+    "document",
+    "file",
+    "for",
+    "from",
+    "guide",
+    "http",
+    "https",
+    "into",
+    "manual",
+    "pdf",
+    "pptx",
+    "reference",
+    "spec",
+    "the",
+    "this",
+    "txt",
+    "with",
+    "www",
+}
+_CODE_EXTENSIONS = {"cs", "css", "go", "html", "java", "js", "py", "rs", "ts"}
 
 _VENDOR_ALIASES = {
     "teradyne ate": "teradyne",
@@ -151,6 +179,83 @@ def normalize_knowledge_type(value: object) -> str:
     return _normalize_flexible_tag(value, _KNOWLEDGE_TYPE_ALIASES)
 
 
+def _filename_extension(filename: str) -> str:
+    name = filename.rsplit("/", 1)[-1].strip().lower()
+    if "." not in name:
+        return ""
+    return name.rsplit(".", 1)[-1]
+
+
+def _infer_doc_type(filename: str) -> str:
+    name = filename.rsplit("/", 1)[-1].strip().lower()
+    ext = _filename_extension(filename)
+    if ext in _CODE_EXTENSIONS:
+        return "code"
+    if any(marker in name for marker in ("release", "changelog", "change_log")):
+        return "release_note"
+    if "faq" in name:
+        return "faq"
+    if "api" in name:
+        return "api"
+    if any(
+        marker in name for marker in ("guide", "tutorial", "how_to", "setup", "install")
+    ):
+        return "guide"
+    return "reference"
+
+
+def _infer_knowledge_type(filename: str, text: str) -> str:
+    ext = _filename_extension(filename)
+    haystack = f"{filename}\n{text[:1000]}".lower()
+    if ext in _CODE_EXTENSIONS:
+        return "code"
+    if any(marker in haystack for marker in ("standard", "specification", " rfc ")):
+        return "standard"
+    if any(marker in haystack for marker in ("bkm", "best known method")):
+        return "internal_bkm"
+    if any(marker in haystack for marker in ("vendor", "datasheet", "manual")):
+        return "vendor_doc"
+    return "document"
+
+
+def _fallback_topics(text: str, filename: str) -> list[str]:
+    """Derive deterministic topics so every indexed document has tag signal."""
+    filename_base = filename.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    source = f"{filename_base}\n{text[:2000]}".lower().replace("-", "_")
+    topics: list[str] = []
+    seen: set[str] = set()
+    for match in _TOPIC_TOKEN_RE.finditer(source):
+        topic = _normalize_flexible_tag(match.group(0), {})
+        if topic == "unknown" or topic in _STOPWORD_TOPICS or topic in seen:
+            continue
+        seen.add(topic)
+        topics.append(topic)
+        if len(topics) >= _MAX_TOPICS:
+            break
+    return topics or ["document"]
+
+
+def ensure_document_tags(tags: DocTags, text: str, filename: str) -> DocTags:
+    """Fill safe fallback tags so every successfully indexed document is tagged.
+
+    LLM tagging is best-effort, but retrieval still benefits from deterministic
+    tag signal when the LLM is unavailable or omits optional fields.
+    """
+    return DocTags(
+        topic=tags.topic or _fallback_topics(text, filename),
+        doc_type=tags.doc_type or _infer_doc_type(filename),
+        intent=tags.intent,
+        language=tags.language,
+        vendor=tags.vendor,
+        platform=tags.platform,
+        knowledge_type=(
+            tags.knowledge_type
+            if tags.knowledge_type != "unknown"
+            else _infer_knowledge_type(filename, text)
+        ),
+    )
+
+
 def _parse_tags(raw: str) -> DocTags:
     """Parse the tagger LLM output into validated DocTags. Any malformed or
     out-of-vocabulary content degrades to empty/None rather than raising."""
@@ -236,15 +341,18 @@ _TAGGER_SYSTEM = (
     "domain. When the document gives enough evidence, infer useful tags for "
     "any source organization, standard body, product, platform, protocol, "
     "technology, API, workflow, business process, feature, file format, or "
-    "document category. Put as many meaningful, retrieval-helpful subjects as "
-    "possible in topic, up to the 10-topic limit; prefer specific terms over "
+    "document category. Every document must receive tags: always provide at "
+    "least one topic, and choose the closest doc_type and knowledge_type even "
+    "when the document is short. Put as many meaningful, retrieval-helpful "
+    "subjects as possible in topic, up to the 10-topic limit; prefer specific "
+    "terms over "
     "generic ones and avoid duplicates. Use vendor_doc for vendor manuals, "
     "internal_bkm for company BKM, code for source code, mixed when multiple "
     "categories are central, or a concise inferred category such as standard, "
     "specification, test_plan, architecture, tutorial, policy, report, or "
-    "datasheet when that is more accurate. If truly unsure about a field, use "
-    "unknown. If unsure about doc_type or intent, omit that key. Output JSON "
-    "only."
+    "datasheet when that is more accurate. Use unknown only for vendor or "
+    "platform when no reliable source or platform can be inferred. If unsure "
+    "about intent, omit that key. Output JSON only."
 )
 
 
@@ -261,8 +369,11 @@ def _build_tagger_llm() -> ChatOpenAI:
 
 
 async def generate_doc_tags(text: str, filename: str) -> DocTags:
-    """One LLM call -> validated DocTags. Never raises: any failure (LLM down,
-    timeout, bad output) returns DocTags.empty() so ingestion can proceed."""
+    """One LLM call -> validated DocTags plus deterministic fallbacks.
+
+    Never raises: LLM failures, timeouts, malformed output, or missing optional
+    fields still return retrieval-helpful tags so ingestion can proceed.
+    """
     s = get_settings()
     snippet = text[: s.rag_tag_max_chars]
     prompt = f"Filename: {filename}\n\nDocument:\n{snippet}"
@@ -270,7 +381,9 @@ async def generate_doc_tags(text: str, filename: str) -> DocTags:
         result = await _build_tagger_llm().ainvoke(
             [SystemMessage(content=_TAGGER_SYSTEM), HumanMessage(content=prompt)]
         )
-        return _parse_tags(result.content or "")
+        return ensure_document_tags(
+            _parse_tags(result.content or ""), snippet, filename
+        )
     except Exception:
         logger.exception("doc_tagging_failed filename=%s", filename)
-        return DocTags.empty()
+        return ensure_document_tags(DocTags.empty(), snippet, filename)
