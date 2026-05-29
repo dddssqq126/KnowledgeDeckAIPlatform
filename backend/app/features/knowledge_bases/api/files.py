@@ -1,7 +1,5 @@
 import io
 from datetime import datetime, timezone
-from typing import Literal
-
 from fastapi import (
     APIRouter,
     Depends,
@@ -11,7 +9,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,17 +39,17 @@ class FileOut(BaseModel):
     created_at: str
 
 
-TagVendor = Literal["teradyne", "advantest", "internal", "unknown"]
-TagPlatform = Literal["ultraflex", "j750", "v93000", "t2000", "generic", "unknown"]
-TagKnowledgeType = Literal[
-    "vendor_doc", "internal_bkm", "code", "mixed", "unknown"
-]
-
-
 class FileTagPatch(BaseModel):
-    vendor: TagVendor
-    platform: TagPlatform
-    knowledge_type: TagKnowledgeType
+    vendor: str = Field(min_length=1, max_length=64)
+    platform: str = Field(min_length=1, max_length=64)
+    knowledge_type: str = Field(min_length=1, max_length=64)
+
+    @field_validator("vendor", "platform", "knowledge_type")
+    @classmethod
+    def tag_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("tag must not be blank")
+        return value
 
 
 class FileTagOut(BaseModel):
@@ -77,16 +75,14 @@ def _content_type_for(extension: str) -> str:
         "csv": "text/csv; charset=utf-8",
         "tsv": "text/tab-separated-values; charset=utf-8",
         "docx": (
-            "application/vnd.openxmlformats-officedocument."
-            "wordprocessingml.document"
+            "application/vnd.openxmlformats-officedocument." "wordprocessingml.document"
         ),
         "pptx": (
             "application/vnd.openxmlformats-officedocument."
             "presentationml.presentation"
         ),
         "xlsx": (
-            "application/vnd.openxmlformats-officedocument."
-            "spreadsheetml.sheet"
+            "application/vnd.openxmlformats-officedocument." "spreadsheetml.sheet"
         ),
     }
     # Falls back to a binary safe default; defensive in case a new extension
@@ -151,9 +147,7 @@ async def _file_tag_out(row: KnowledgeFile) -> FileTagOut:
         vendor=row.tag_vendor or qdrant_tags.get("vendor") or "unknown",
         platform=row.tag_platform or qdrant_tags.get("platform") or "unknown",
         knowledge_type=(
-            row.tag_knowledge_type
-            or qdrant_tags.get("knowledge_type")
-            or "unknown"
+            row.tag_knowledge_type or qdrant_tags.get("knowledge_type") or "unknown"
         ),
         chunk_count=int(qdrant_tags.get("chunk_count") or 0),
     )

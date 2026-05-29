@@ -28,18 +28,40 @@ def test_parse_strips_code_fence() -> None:
     assert tags.doc_type == "guide"
 
 
-def test_parse_rejects_unknown_enum() -> None:
+def test_parse_rejects_unknown_doc_type_and_intent_but_keeps_flexible_tags() -> None:
     raw = (
         '{"topic": ["x"], "doc_type": "newspaper", "intent": "vibes",'
-        ' "vendor": "initech", "platform": "big-iron",'
+        ' "vendor": "Initech", "platform": "big-iron",'
         ' "knowledge_type": "memo"}'
     )
     tags = _parse_tags(raw)
     assert tags.doc_type is None
     assert tags.intent is None
-    assert tags.vendor == "unknown"
-    assert tags.platform == "unknown"
-    assert tags.knowledge_type == "unknown"
+    assert tags.vendor == "initech"
+    assert tags.platform == "big_iron"
+    assert tags.knowledge_type == "memo"
+
+
+def test_parse_keeps_standards_and_protocol_tags() -> None:
+    raw = (
+        '{"topic": ["radio access", "wifi"], "vendor": "IEEE",'
+        ' "platform": "802.11ax", "knowledge_type": "Wireless Standard"}'
+    )
+    tags = _parse_tags(raw)
+    assert tags.vendor == "ieee"
+    assert tags.platform == "802.11ax"
+    assert tags.knowledge_type == "wireless_standard"
+
+
+def test_parse_can_tag_5g_documents() -> None:
+    raw = (
+        '{"topic": ["5g", "nr"], "vendor": "3GPP",'
+        ' "platform": "5G NR", "knowledge_type": "specification"}'
+    )
+    tags = _parse_tags(raw)
+    assert tags.vendor == "3gpp"
+    assert tags.platform == "5g_nr"
+    assert tags.knowledge_type == "specification"
 
 
 def test_parse_caps_topics_at_five() -> None:

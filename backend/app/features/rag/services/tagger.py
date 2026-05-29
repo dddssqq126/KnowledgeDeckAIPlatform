@@ -6,10 +6,12 @@ gets embedded + sparse-encoded (soft enrichment) so tiny documents carry more
 semantic signal. See
 docs/superpowers/specs/2026-05-27-tag-aware-rag-design.md.
 """
+
 from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -25,6 +27,8 @@ VENDORS = {"teradyne", "advantest", "internal", "unknown"}
 PLATFORMS = {"ultraflex", "j750", "v93000", "t2000", "generic", "unknown"}
 KNOWLEDGE_TYPES = {"vendor_doc", "internal_bkm", "code", "mixed", "unknown"}
 _MAX_TOPICS = 5
+_MAX_TAG_VALUE_CHARS = 64
+_TAG_VALUE_RE = re.compile(r"[^a-z0-9._+/#]+")
 
 _VENDOR_ALIASES = {
     "teradyne ate": "teradyne",
@@ -106,31 +110,45 @@ def _normalize_key(value: object) -> str | None:
     return key or None
 
 
+def _normalize_flexible_tag(value: object, aliases: dict[str, str]) -> str:
+    """Normalize a user/LLM supplied tag while preserving useful new labels.
+
+    The original tagger only accepted a small ATE-focused vocabulary. That made
+    standards/protocol documents (for example 5G or IEEE 802.x material) fall
+    back to ``unknown`` even when the LLM had enough context to suggest a useful
+    tag. We still canonicalize known aliases, but otherwise keep a compact slug
+    so future domains can be tagged without a code deploy.
+    """
+    key = _normalize_key(value)
+    if key is None or key == "unknown":
+        return "unknown"
+    if key in aliases:
+        return aliases[key]
+
+    slug = _TAG_VALUE_RE.sub("_", key).strip("_")
+    slug = re.sub(r"_+", "_", slug)[:_MAX_TAG_VALUE_CHARS].strip("_")
+    return slug or "unknown"
+
+
 def normalize_vendor(value: object) -> str:
     key = _normalize_key(value)
-    if key is None:
-        return "unknown"
     if key in VENDORS:
         return key
-    return _VENDOR_ALIASES.get(key, "unknown")
+    return _normalize_flexible_tag(value, _VENDOR_ALIASES)
 
 
 def normalize_platform(value: object) -> str:
     key = _normalize_key(value)
-    if key is None:
-        return "unknown"
     if key in PLATFORMS:
         return key
-    return _PLATFORM_ALIASES.get(key, "unknown")
+    return _normalize_flexible_tag(value, _PLATFORM_ALIASES)
 
 
 def normalize_knowledge_type(value: object) -> str:
     key = _normalize_key(value)
-    if key is None:
-        return "unknown"
     if key in KNOWLEDGE_TYPES:
         return key
-    return _KNOWLEDGE_TYPE_ALIASES.get(key, "unknown")
+    return _normalize_flexible_tag(value, _KNOWLEDGE_TYPE_ALIASES)
 
 
 def _parse_tags(raw: str) -> DocTags:
@@ -150,7 +168,9 @@ def _parse_tags(raw: str) -> DocTags:
 
     topic_raw = obj.get("topic")
     if isinstance(topic_raw, list):
-        topic = [s for t in topic_raw if isinstance(t, str) and (s := t.strip())][:_MAX_TOPICS]
+        topic = [s for t in topic_raw if isinstance(t, str) and (s := t.strip())][
+            :_MAX_TOPICS
+        ]
     else:
         topic = []
 
@@ -161,7 +181,11 @@ def _parse_tags(raw: str) -> DocTags:
     intent = intent if intent in _INTENTS else None
 
     language = obj.get("language")
-    language = str(language).strip() if isinstance(language, str) and language.strip() else None
+    language = (
+        str(language).strip()
+        if isinstance(language, str) and language.strip()
+        else None
+    )
 
     return DocTags(
         topic=topic,
@@ -201,14 +225,19 @@ _TAGGER_SYSTEM = (
     '  "topic": array of 2-5 short lowercase topic keywords,\n'
     f'  "doc_type": one of {sorted(_DOC_TYPES)},\n'
     f'  "intent": one of {sorted(_INTENTS)},\n'
-    f'  "vendor": one of {sorted(VENDORS)},\n'
-    f'  "platform": one of {sorted(PLATFORMS)},\n'
-    f'  "knowledge_type": one of {sorted(KNOWLEDGE_TYPES)},\n'
+    '  "vendor": a concise lowercase source/organization/domain tag,\n'
+    '  "platform": a concise lowercase product/platform/standard tag,\n'
+    '  "knowledge_type": a concise lowercase document-category tag,\n'
     '  "language": ISO language code of the document (e.g. "en", "zh").\n'
-    "Use vendor_doc for vendor manuals, internal_bkm for company BKM, code "
-    "for source code, mixed when multiple categories are central. If unsure "
-    "about vendor/platform/knowledge_type, use unknown. If unsure about "
-    "doc_type or intent, omit that key. Output JSON only."
+    "Prefer known ATE values when they fit: "
+    f"vendor={sorted(VENDORS)}, platform={sorted(PLATFORMS)}, "
+    f"knowledge_type={sorted(KNOWLEDGE_TYPES)}. "
+    "For non-ATE standards or protocol documents, infer useful tags instead "
+    "of forcing unknown; examples: vendor=3gpp or ieee, platform=5g_nr or "
+    "802.11ax, knowledge_type=standard or specification. Use vendor_doc for "
+    "vendor manuals, internal_bkm for company BKM, code for source code, mixed "
+    "when multiple categories are central. If truly unsure, use unknown. If "
+    "unsure about doc_type or intent, omit that key. Output JSON only."
 )
 
 

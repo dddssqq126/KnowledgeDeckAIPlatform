@@ -61,20 +61,24 @@ async def test_update_file_tags_reindexes_and_returns_summary(
         await session.commit()
 
     async def fake_list_file_tags(*, user_id, kb_id):
-        return [{
-            "file_id": row.id,
-            "doc_type": "guide",
-            "intent": "how_to",
-            "tags_topic": ["ate"],
-            "vendor": "advantest",
-            "platform": "v93000",
-            "knowledge_type": "internal_bkm",
-            "chunk_count": 4,
-        }]
+        return [
+            {
+                "file_id": row.id,
+                "doc_type": "guide",
+                "intent": "how_to",
+                "tags_topic": ["ate"],
+                "vendor": "advantest",
+                "platform": "v93000",
+                "knowledge_type": "internal_bkm",
+                "chunk_count": 4,
+            }
+        ]
 
     monkeypatch.setattr(files_module.ingestion, "cleanup_file_vectors", fake_cleanup)
     monkeypatch.setattr(files_module.ingestion, "ingest_file", fake_ingest)
-    monkeypatch.setattr(files_module.qdrant_store, "list_file_tags", fake_list_file_tags)
+    monkeypatch.setattr(
+        files_module.qdrant_store, "list_file_tags", fake_list_file_tags
+    )
 
     res = await http_client.patch(
         f"/knowledge-bases/{kb.id}/files/{row.id}/tags",
@@ -107,12 +111,70 @@ async def test_update_file_tags_reindexes_and_returns_summary(
 
 
 @pytest.mark.asyncio
-async def test_update_file_tags_rejects_invalid_value(http_client, two_users_file):
+async def test_update_file_tags_accepts_flexible_values(
+    http_client, db_session, two_users_file, monkeypatch
+):
+    alice, _bob, kb, row = two_users_file
+    calls = {"cleanup": [], "ingest": []}
+
+    async def fake_cleanup(*, file_id):
+        calls["cleanup"].append(file_id)
+
+    async def fake_ingest(*, session, file_row, data):
+        calls["ingest"].append((file_row.id, data))
+        file_row.status = FileStatus.INDEXED
+        await session.commit()
+
+    async def fake_list_file_tags(*, user_id, kb_id):
+        return [
+            {
+                "file_id": row.id,
+                "doc_type": "reference",
+                "intent": "conceptual",
+                "tags_topic": ["5g"],
+                "vendor": "unknown",
+                "platform": "unknown",
+                "knowledge_type": "unknown",
+                "chunk_count": 2,
+            }
+        ]
+
+    monkeypatch.setattr(files_module.ingestion, "cleanup_file_vectors", fake_cleanup)
+    monkeypatch.setattr(files_module.ingestion, "ingest_file", fake_ingest)
+    monkeypatch.setattr(
+        files_module.qdrant_store, "list_file_tags", fake_list_file_tags
+    )
+
+    res = await http_client.patch(
+        f"/knowledge-bases/{kb.id}/files/{row.id}/tags",
+        json={
+            "vendor": "3GPP",
+            "platform": "5G NR",
+            "knowledge_type": "Wireless Standard",
+        },
+        headers=auth(alice),
+    )
+
+    assert res.status_code == 200
+    assert res.json()["vendor"] == "3gpp"
+    assert res.json()["platform"] == "5g_nr"
+    assert res.json()["knowledge_type"] == "wireless_standard"
+    assert calls == {"cleanup": [row.id], "ingest": [(row.id, b"hello")]}
+    stored = await db_session.scalar(
+        select(KnowledgeFile).where(KnowledgeFile.id == row.id)
+    )
+    assert stored.tag_vendor == "3gpp"
+    assert stored.tag_platform == "5g_nr"
+    assert stored.tag_knowledge_type == "wireless_standard"
+
+
+@pytest.mark.asyncio
+async def test_update_file_tags_rejects_blank_value(http_client, two_users_file):
     alice, _bob, kb, row = two_users_file
     res = await http_client.patch(
         f"/knowledge-bases/{kb.id}/files/{row.id}/tags",
         json={
-            "vendor": "initech",
+            "vendor": "   ",
             "platform": "v93000",
             "knowledge_type": "internal_bkm",
         },
