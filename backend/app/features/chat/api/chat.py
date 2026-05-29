@@ -318,8 +318,6 @@ async def update_session(
     return _session_out(s)
 
 
-
-
 @router.post("/messages/{message_id}/feedback", response_model=MessageFeedbackOut)
 async def upsert_message_feedback(
     message_id: int,
@@ -448,7 +446,10 @@ async def stream_chat(
                     )
                 query_tags = chat_service.detect_query_tags(user_message, rag_query)
                 context, citations = await rag.retrieve_context(
-                    user_id=user_id, kb_ids=kb_ids, query=rag_query
+                    user_id=user_id,
+                    kb_ids=kb_ids,
+                    query=rag_query,
+                    query_tags=query_tags,
                 )
 
             collected: list[str] = []

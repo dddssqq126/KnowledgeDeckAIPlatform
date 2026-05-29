@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     # Limit repeated chunks from one file so final context covers more likely
     # documents instead of filling the prompt with near-duplicates.
     rag_per_file_context_limit: int = 3
+    # Soft boost per matching query metadata tag (vendor/platform/knowledge_type).
+    # This improves ranking without hard-filtering away potentially useful hits.
+    rag_tag_match_boost: float = 0.05
     rag_min_score: float = 0.30
     rag_rerank_min_score: float = 0.10
 

@@ -24,6 +24,7 @@ from langchain_openai import ChatOpenAI
 
 from app.core.config import get_settings
 from app.db.models import ChatMessage, ChatRole
+from app.features.rag.services import tagger
 
 logger = logging.getLogger(__name__)
 
@@ -292,14 +293,20 @@ class QueryTags:
 
 
 def detect_query_tags(*texts: str | None) -> QueryTags:
-    """Detect vendor/platform/category hints from user and rewritten queries."""
+    """Detect soft metadata hints from user and rewritten retrieval queries."""
     haystack = " ".join(t for t in texts if t).casefold()
 
     vendor = "unknown"
-    if any(term in haystack for term in ("teradyne", "泰瑞達", "泰瑞达")):
-        vendor = "teradyne"
-    elif any(term in haystack for term in ("advantest", "艾德萬", "爱德万")):
-        vendor = "advantest"
+    for canonical, aliases in (
+        ("teradyne", ("teradyne", "泰瑞達", "泰瑞达")),
+        ("advantest", ("advantest", "艾德萬", "爱德万")),
+        ("3gpp", ("3gpp", "third generation partnership project")),
+        ("ieee", ("ieee", "institute of electrical and electronics engineers")),
+        ("pcisig", ("pci-sig", "pci sig", "pcisig")),
+    ):
+        if any(alias in haystack for alias in aliases):
+            vendor = canonical
+            break
 
     platform = "unknown"
     for canonical, aliases in (
@@ -307,6 +314,10 @@ def detect_query_tags(*texts: str | None) -> QueryTags:
         ("j750", ("j750", "j 750")),
         ("v93000", ("v93000", "v93k", "sm93000", "sm 93000")),
         ("t2000", ("t2000", "t 2000")),
+        ("5g_nr", ("5g nr", "5gnr", "new radio")),
+        ("5g", ("5g",)),
+        ("802.11", ("802.11", "wi-fi", "wifi")),
+        ("pcie", ("pcie", "pci express")),
     ):
         if any(alias in haystack for alias in aliases):
             platform = canonical
@@ -320,11 +331,18 @@ def detect_query_tags(*texts: str | None) -> QueryTags:
         for term in ("code", "source code", "function", "class", "api", "程式", "代碼")
     ):
         knowledge_type = "code"
+    elif any(term in haystack for term in ("standard", "specification", "spec", "rfc")):
+        knowledge_type = "standard"
+    elif any(
+        term in haystack
+        for term in ("vendor doc", "vendor document", "manual", "datasheet")
+    ):
+        knowledge_type = "vendor_doc"
 
     return QueryTags(
-        vendor=vendor,
-        platform=platform,
-        knowledge_type=knowledge_type,
+        vendor=tagger.normalize_vendor(vendor),
+        platform=tagger.normalize_platform(platform),
+        knowledge_type=tagger.normalize_knowledge_type(knowledge_type),
     )
 
 
@@ -480,9 +498,7 @@ def _symbol_lookup_query(symbol: str) -> str:
     return _SYMBOL_QUERY_TEMPLATE.format(symbol=symbol)
 
 
-async def rewrite_for_retrieval(
-    history: list[ChatMessage], user_message: str
-) -> str:
+async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -> str:
     """Rewrite the user's question into a standalone, abbreviation-expanded
     query for the retrieval pipeline.
 
@@ -579,7 +595,9 @@ async def stream_answer(
         messages.append(SystemMessage(content=f"Context:\n{context}"))
     if rag_query:
         messages.append(
-            SystemMessage(content=f"Retrieval query used to select context: {rag_query}")
+            SystemMessage(
+                content=f"Retrieval query used to select context: {rag_query}"
+            )
         )
     if query_tags and query_tags.has_signal():
         messages.append(SystemMessage(content=query_tags.as_prompt_text()))

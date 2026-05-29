@@ -51,6 +51,55 @@ def test_select_final_hits_limits_repeated_files(monkeypatch) -> None:
     assert [hit["payload"]["file_id"] for hit in selected] == [1, 1, 2, 3]
 
 
+def test_select_final_hits_applies_tag_match_boost(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    monkeypatch.setattr(
+        rag,
+        "get_settings",
+        lambda: Settings(
+            rag_final_top_k=2,
+            rag_per_file_context_limit=3,
+            rag_tag_match_boost=0.05,
+        ),
+    )
+    hits = [
+        {
+            "score": 0.2,
+            "payload": {
+                "file_id": 1,
+                "vendor": "3gpp",
+                "platform": "5g_nr",
+                "knowledge_type": "standard",
+            },
+        },
+        {
+            "score": 0.2,
+            "payload": {
+                "file_id": 2,
+                "vendor": "unknown",
+                "platform": "unknown",
+                "knowledge_type": "document",
+            },
+        },
+    ]
+
+    selected = rag._select_final_hits(
+        hits,
+        [(0, 0.08), (1, 0.09)],
+        min_score=0.1,
+        query_tags={
+            "vendor": "3gpp",
+            "platform": "5g_nr",
+            "knowledge_type": "standard",
+        },
+    )
+
+    assert [hit["payload"]["file_id"] for hit in selected] == [1]
+    assert selected[0]["rerank_score"] == 0.08
+    assert selected[0]["score"] == pytest.approx(0.23)
+
+
 @pytest.mark.asyncio
 async def test_citations_include_tag_fields(monkeypatch) -> None:
     hit = {
@@ -74,7 +123,9 @@ async def test_citations_include_tag_fields(monkeypatch) -> None:
     async def fake_sparse_query(_q):
         return SparseVec(indices=[1], values=[1.0])
 
-    async def fake_hybrid(**_kwargs):
+    async def fake_hybrid(**kwargs):
+        assert kwargs["top_k"] == 40
+        assert kwargs["prefetch_limit"] == 80
         return [hit]
 
     class _FakeReranker:
@@ -89,7 +140,10 @@ async def test_citations_include_tag_fields(monkeypatch) -> None:
     monkeypatch.setattr(rag, "_build_reranker", lambda: _FakeReranker())
 
     _context, citations = await rag.retrieve_context(
-        user_id=1, kb_ids=None, query="hpa?"
+        user_id=1,
+        kb_ids=None,
+        query="hpa?",
+        query_tags={"vendor": "teradyne", "platform": "j750"},
     )
 
     assert citations == [

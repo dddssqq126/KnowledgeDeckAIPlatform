@@ -54,8 +54,35 @@ def _rerank_passage(hit: dict[str, Any]) -> str:
     return " | ".join(metadata_parts) + "\n" + str(payload.get("text") or "")
 
 
+def _query_tag_value(query_tags: Any | None, field: str) -> str:
+    if query_tags is None:
+        return "unknown"
+    if isinstance(query_tags, dict):
+        value = query_tags.get(field)
+    else:
+        value = getattr(query_tags, field, None)
+    return value if isinstance(value, str) and value else "unknown"
+
+
+def _tag_match_boost(payload: dict[str, Any], query_tags: Any | None) -> float:
+    """Return a soft score boost for metadata that matches query intent tags."""
+    if query_tags is None:
+        return 0.0
+    s = get_settings()
+    boost = 0.0
+    for field in ("vendor", "platform", "knowledge_type"):
+        wanted = _query_tag_value(query_tags, field)
+        if wanted != "unknown" and (payload.get(field) or "unknown") == wanted:
+            boost += s.rag_tag_match_boost
+    return boost
+
+
 def _select_final_hits(
-    hits: list[dict[str, Any]], ranked: list[tuple[int, float]], *, min_score: float
+    hits: list[dict[str, Any]],
+    ranked: list[tuple[int, float]],
+    *,
+    min_score: float,
+    query_tags: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Apply rerank threshold, top-K, and per-file diversity limits."""
     s = get_settings()
@@ -64,16 +91,18 @@ def _select_final_hits(
     per_file_limit = max(1, s.rag_per_file_context_limit)
 
     for orig_idx, rerank_score in ranked:
-        if rerank_score < min_score:
-            continue
         hit = dict(hits[orig_idx])
+        adjusted_score = rerank_score + _tag_match_boost(hit["payload"], query_tags)
+        if adjusted_score < min_score:
+            continue
         file_id = hit["payload"].get("file_id")
         if file_id is not None:
             seen_count = per_file_counts.get(file_id, 0)
             if seen_count >= per_file_limit:
                 continue
             per_file_counts[file_id] = seen_count + 1
-        hit["score"] = rerank_score
+        hit["score"] = adjusted_score
+        hit["rerank_score"] = rerank_score
         final_hits.append(hit)
         if len(final_hits) >= s.rag_final_top_k:
             break
@@ -108,7 +137,11 @@ def _format_context(hits: list[dict[str, Any]]) -> str:
 
 
 async def retrieve_context(
-    *, user_id: int, kb_ids: list[int] | None, query: str
+    *,
+    user_id: int,
+    kb_ids: list[int] | None,
+    query: str,
+    query_tags: Any | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Hybrid dense+sparse search → cross-encoder rerank → top-K context.
 
@@ -144,7 +177,10 @@ async def retrieve_context(
         ranked = [(i, dense_hits[i]["score"]) for i in range(len(dense_hits))]
 
     final_hits = _select_final_hits(
-        dense_hits, ranked, min_score=s.rag_rerank_min_score
+        dense_hits,
+        ranked,
+        min_score=s.rag_rerank_min_score,
+        query_tags=query_tags,
     )
 
     if not final_hits:

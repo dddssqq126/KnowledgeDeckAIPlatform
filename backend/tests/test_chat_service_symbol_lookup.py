@@ -53,6 +53,14 @@ async def test_rewrite_for_retrieval_builds_symbol_query() -> None:
             "J750 troubleshooting",
             ("unknown", "j750", "unknown"),
         ),
+        (
+            "3GPP 5G NR specification",
+            ("3gpp", "5g_nr", "standard"),
+        ),
+        (
+            "IEEE 802.11ax standard",
+            ("ieee", "802.11", "standard"),
+        ),
     ],
 )
 def test_detect_query_tags(message: str, expected: tuple[str, str, str]) -> None:
