@@ -237,7 +237,7 @@ export default function ChatPage() {
         onScroll={handleScroll}
         className="nice-scrollbar flex-1 overflow-auto px-6 py-7"
       >
-        <div className="mx-auto max-w-4xl space-y-7">
+        <div className="mx-auto max-w-6xl space-y-7">
           {messages.length === 0 && !isStreaming ? (
             <div className="py-16 text-center">
               <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-card shadow-sm">
@@ -307,7 +307,7 @@ function MessageBubble({
     <div className={`flex items-start gap-4 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
       <Avatar isUser={isUser} />
       <div
-        className={`flex min-w-0 max-w-[88%] flex-col gap-1 ${
+        className={`flex min-w-0 max-w-[96%] flex-col gap-1 ${
           isUser ? "items-end" : "items-start"
         }`}
       >
@@ -379,31 +379,6 @@ function CitationList({ citations }: { citations: Citation[] }) {
             className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1"
           >
             <span>{citation.filename}</span>
-            {citation.doc_type ? (
-              <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
-                {citation.doc_type}
-              </span>
-            ) : null}
-            {citation.vendor && citation.vendor !== "unknown" ? (
-              <span className="rounded bg-amber-50 px-1 text-[10px] text-amber-700">
-                {citation.vendor}
-              </span>
-            ) : null}
-            {citation.platform && citation.platform !== "unknown" ? (
-              <span className="rounded bg-cyan-50 px-1 text-[10px] text-cyan-700">
-                {citation.platform}
-              </span>
-            ) : null}
-            {citation.knowledge_type && citation.knowledge_type !== "unknown" ? (
-              <span className="rounded bg-violet-50 px-1 text-[10px] text-violet-700">
-                {citation.knowledge_type}
-              </span>
-            ) : null}
-            {(citation.tags_topic ?? []).map((t) => (
-              <span key={t} className="text-[10px] text-muted-foreground">
-                #{t}
-              </span>
-            ))}
             <button
               type="button"
               onClick={() => void handleDownload(citation)}

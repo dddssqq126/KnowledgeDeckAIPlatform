@@ -87,4 +87,40 @@ describe("ChatPage", () => {
     });
     expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
+
+  it("shows source filenames without metadata tag chips", async () => {
+    vi.mocked(getSession).mockResolvedValueOnce({
+      id: 1,
+      title: "RAG onboarding checklist",
+      created_at: "2026-05-06T00:00:00Z",
+      updated_at: "2026-05-06T01:00:00Z",
+      messages: [
+        {
+          id: 22,
+          role: "assistant",
+          content: "Tagged citation answer",
+          citations: [
+            {
+              file_id: 7,
+              filename: "source.pdf",
+              doc_type: "standard",
+              vendor: "3gpp",
+              platform: "5g_nr",
+              knowledge_type: "spec",
+              tags_topic: ["ran"],
+            },
+          ],
+          created_at: "2026-05-06T00:10:00Z",
+        },
+      ],
+    });
+
+    render(<ChatPage />);
+
+    expect(await screen.findByText("source.pdf")).toBeInTheDocument();
+    expect(screen.queryByText("3gpp")).not.toBeInTheDocument();
+    expect(screen.queryByText("5g_nr")).not.toBeInTheDocument();
+    expect(screen.queryByText("spec")).not.toBeInTheDocument();
+    expect(screen.queryByText("#ran")).not.toBeInTheDocument();
+  });
 });
