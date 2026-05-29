@@ -1,6 +1,6 @@
 "use client";
 
-import { api } from "./api";
+import { LONG_RUNNING_REQUEST_TIMEOUT_MS, api } from "./api";
 import { downloadBlob, safeFilename } from "./download";
 import { isMockDataMode } from "./mock-mode";
 
@@ -38,20 +38,9 @@ export type KnowledgeFile = {
   created_at: string;
 };
 
-export type TagVendor = "teradyne" | "advantest" | "internal" | "unknown";
-export type TagPlatform =
-  | "ultraflex"
-  | "j750"
-  | "v93000"
-  | "t2000"
-  | "generic"
-  | "unknown";
-export type TagKnowledgeType =
-  | "vendor_doc"
-  | "internal_bkm"
-  | "code"
-  | "mixed"
-  | "unknown";
+export type TagVendor = string;
+export type TagPlatform = string;
+export type TagKnowledgeType = string;
 
 export type FileTags = {
   file_id: number;
@@ -82,6 +71,7 @@ export async function updateFileTags(
   const res = await api.patch<FileTags>(
     `/knowledge-bases/${kbId}/files/${fileId}/tags`,
     input,
+    { timeout: LONG_RUNNING_REQUEST_TIMEOUT_MS },
   );
   return res.data;
 }
@@ -109,8 +99,12 @@ export async function updateKnowledgeBase(
   // Pass empty string to clear description; omit a field to leave it alone.
   const body: Record<string, unknown> = {};
   if (input.name !== undefined) body.name = input.name;
-  if (input.description !== undefined) body.description = input.description ?? "";
-  const res = await api.patch<KnowledgeBaseCreated>(`/knowledge-bases/${id}`, body);
+  if (input.description !== undefined)
+    body.description = input.description ?? "";
+  const res = await api.patch<KnowledgeBaseCreated>(
+    `/knowledge-bases/${id}`,
+    body,
+  );
   return res.data;
 }
 
@@ -134,6 +128,7 @@ export async function uploadFile(
     `/knowledge-bases/${kbId}/files`,
     form,
     {
+      timeout: LONG_RUNNING_REQUEST_TIMEOUT_MS,
       onUploadProgress: (e) => {
         if (!onProgress || !e.total) return;
         onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100)));

@@ -8,6 +8,7 @@ Status transitions A drives:
   uploaded -> indexed (success)
   uploaded -> failed  (any exception during ingestion)
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,11 +33,15 @@ logger = logging.getLogger(__name__)
 def _build_embedding_client() -> EmbeddingClient:
     s = get_settings()
     return EmbeddingClient(
-        base_url=s.embedding_base_url, api_key=s.embedding_api_key, model=s.embedding_model
+        base_url=s.embedding_base_url,
+        api_key=s.embedding_api_key,
+        model=s.embedding_model,
     )
 
 
-def _build_chunks(segments: list[document_parser.ParsedSegment]) -> list[dict[str, Any]]:
+def _build_chunks(
+    segments: list[document_parser.ParsedSegment],
+) -> list[dict[str, Any]]:
     """Flatten parser output into chunk dicts ready for upsert."""
     s = get_settings()
     out: list[dict[str, Any]] = []
@@ -46,7 +51,11 @@ def _build_chunks(segments: list[document_parser.ParsedSegment]) -> list[dict[st
             segment.text, chunk_chars=s.chunk_chars, chunk_overlap=s.chunk_overlap
         ):
             out.append(
-                {"text": piece, "page_number": segment.page_number, "chunk_index": chunk_index}
+                {
+                    "text": piece,
+                    "page_number": segment.page_number,
+                    "chunk_index": chunk_index,
+                }
             )
             chunk_index += 1
     return out
@@ -54,9 +63,14 @@ def _build_chunks(segments: list[document_parser.ParsedSegment]) -> list[dict[st
 
 async def _embed(texts: list[str]) -> list[list[float]]:
     client = _build_embedding_client()
-    response = await client.create_embeddings(texts)
-    # OpenAI-compatible embedding response: {"data": [{"embedding": [...]}], ...}
-    return [item["embedding"] for item in response["data"]]
+    s = get_settings()
+    batch_size = max(1, s.embedding_batch_size)
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), batch_size):
+        response = await client.create_embeddings(texts[start : start + batch_size])
+        # OpenAI-compatible embedding response: {"data": [{"embedding": [...]}, ...]}
+        vectors.extend(item["embedding"] for item in response["data"])
+    return vectors
 
 
 async def ingest_file(
@@ -121,9 +135,7 @@ async def ingest_file(
         file_row.status = FileStatus.INDEXED
         file_row.status_error = None
         await session.commit()
-        logger.info(
-            "ingest_complete file_id=%s chunks=%s", file_row.id, len(chunks)
-        )
+        logger.info("ingest_complete file_id=%s chunks=%s", file_row.id, len(chunks))
     except Exception as exc:  # pragma: no cover - prototype error path
         logger.exception("ingest_failed file_id=%s", file_row.id)
         file_row.status = FileStatus.FAILED

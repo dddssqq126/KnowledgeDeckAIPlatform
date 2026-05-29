@@ -29,32 +29,64 @@ KNOWLEDGE_TYPES = {"vendor_doc", "internal_bkm", "code", "mixed", "unknown"}
 _MAX_TOPICS = 10
 _MAX_TAG_VALUE_CHARS = 64
 _TAG_VALUE_RE = re.compile(r"[^a-z0-9._+/#]+")
-_TOPIC_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9._+/#]{1,63}")
+_TOPIC_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+/#-]{1,63}")
+_TOPIC_WORD_RE = re.compile(r"[a-z0-9]+")
 _STOPWORD_TOPICS = {
     "about",
+    "all",
     "and",
     "are",
+    "bridge",
     "com",
+    "commissioning",
+    "confidential",
+    "copyright",
+    "corp",
+    "corporation",
+    "disclaimer",
     "doc",
     "docs",
     "document",
     "file",
+    "figure",
     "for",
     "from",
+    "good",
     "guide",
     "http",
     "https",
+    "inc",
+    "incorporated",
     "into",
+    "ltd",
+    "llc",
     "manual",
+    "ok",
+    "page",
     "pdf",
     "pptx",
+    "proprietary",
     "reference",
+    "reserved",
+    "right",
+    "rights",
+    "runbook",
+    "section",
+    "setup",
     "spec",
+    "table",
     "the",
     "this",
+    "troubleshooting",
     "txt",
+    "version",
     "with",
     "www",
+}
+_TOPIC_BOILERPLATE_PHRASES = {
+    "all rights reserved",
+    "all right reserved",
+    "copyright all rights reserved",
 }
 _CODE_EXTENSIONS = {"cs", "css", "go", "html", "java", "js", "py", "rs", "ts"}
 
@@ -179,6 +211,64 @@ def normalize_knowledge_type(value: object) -> str:
     return _normalize_flexible_tag(value, _KNOWLEDGE_TYPE_ALIASES)
 
 
+def _topic_words(value: str) -> list[str]:
+    return _TOPIC_WORD_RE.findall(value.lower())
+
+
+def _normalize_topic(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    topic = " ".join(value.strip().lower().split())[:_MAX_TAG_VALUE_CHARS].strip()
+    if not topic:
+        return None
+    words = _topic_words(topic)
+    if not words:
+        return None
+    if topic in _TOPIC_BOILERPLATE_PHRASES:
+        return None
+    if all(len(word) < 2 for word in words) and not any(ch.isdigit() for ch in topic):
+        return None
+    if all(word in _STOPWORD_TOPICS for word in words):
+        return None
+    return topic
+
+
+def _is_proper_topic_candidate(value: str, *, from_filename: bool) -> bool:
+    topic = _normalize_topic(value)
+    if topic is None:
+        return False
+    # Standards, protocols, model numbers, file formats, and product IDs often
+    # contain digits or separators even when lowercased (5g, 802.11ax, api/v1).
+    if any(ch.isdigit() for ch in value) or any(ch in value for ch in "._+/#"):
+        return True
+    # Acronyms and mixed-case identifiers are common proper technical nouns
+    # (PCIe, OpenAPI, Qdrant, iOS). Avoid plain sentence-case text tokens unless
+    # they came from the filename, where title-cased words are more likely labels.
+    letters = [ch for ch in value if ch.isalpha()]
+    has_upper = any(ch.isupper() for ch in letters)
+    has_lower = any(ch.islower() for ch in letters)
+    if (
+        has_upper
+        and has_lower
+        and (value[:1].islower() or any(ch.isupper() for ch in value[1:]))
+    ):
+        return True
+    if len(letters) > 1 and all(ch.isupper() for ch in letters):
+        return True
+    return from_filename and value[:1].isupper()
+
+
+def _append_topic(topics: list[str], seen: set[str], value: object) -> None:
+    topic = _normalize_topic(value)
+    if topic is None:
+        return
+    key = _normalize_flexible_tag(topic, {})
+    if key == "unknown" or key in seen:
+        return
+    seen.add(key)
+    topics.append(topic)
+
+
 def _filename_extension(filename: str) -> str:
     name = filename.rsplit("/", 1)[-1].strip().lower()
     if "." not in name:
@@ -219,19 +309,24 @@ def _infer_knowledge_type(filename: str, text: str) -> str:
 
 
 def _fallback_topics(text: str, filename: str) -> list[str]:
-    """Derive deterministic topics so every indexed document has tag signal."""
+    """Derive deterministic proper-noun topics for indexed documents."""
     filename_base = filename.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-    source = f"{filename_base}\n{text[:2000]}".lower().replace("-", "_")
     topics: list[str] = []
     seen: set[str] = set()
-    for match in _TOPIC_TOKEN_RE.finditer(source):
-        topic = _normalize_flexible_tag(match.group(0), {})
-        if topic == "unknown" or topic in _STOPWORD_TOPICS or topic in seen:
-            continue
-        seen.add(topic)
-        topics.append(topic)
-        if len(topics) >= _MAX_TOPICS:
-            break
+
+    filename_slug = _normalize_flexible_tag(filename_base, {})
+    filename_words = _topic_words(filename_slug)
+    if filename_words and not all(word in _STOPWORD_TOPICS for word in filename_words):
+        _append_topic(topics, seen, filename_slug)
+
+    for source, from_filename in ((filename_base, True), (text[:2000], False)):
+        for match in _TOPIC_TOKEN_RE.finditer(source.replace("-", " ")):
+            candidate = match.group(0)
+            if not _is_proper_topic_candidate(candidate, from_filename=from_filename):
+                continue
+            _append_topic(topics, seen, candidate)
+            if len(topics) >= _MAX_TOPICS:
+                return topics
     return topics or ["document"]
 
 
@@ -272,12 +367,13 @@ def _parse_tags(raw: str) -> DocTags:
         return DocTags.empty()
 
     topic_raw = obj.get("topic")
+    topic: list[str] = []
     if isinstance(topic_raw, list):
-        topic = [s for t in topic_raw if isinstance(t, str) and (s := t.strip())][
-            :_MAX_TOPICS
-        ]
-    else:
-        topic = []
+        seen_topics: set[str] = set()
+        for raw_topic in topic_raw:
+            _append_topic(topic, seen_topics, raw_topic)
+            if len(topic) >= _MAX_TOPICS:
+                break
 
     doc_type = obj.get("doc_type")
     doc_type = doc_type if doc_type in _DOC_TYPES else None
@@ -327,7 +423,7 @@ def enrich_text_for_embedding(text: str, tags: DocTags) -> str:
 _TAGGER_SYSTEM = (
     "You label a document for a retrieval system. Read the document and reply "
     "with ONLY a JSON object, no prose, no code fence, with keys:\n"
-    '  "topic": array of 3-10 short lowercase topic keywords,\n'
+    '  "topic": array of 3-10 short lowercase proper-noun topic keywords,\n'
     f'  "doc_type": one of {sorted(_DOC_TYPES)},\n'
     f'  "intent": one of {sorted(_INTENTS)},\n'
     '  "vendor": a concise lowercase source/organization/domain tag,\n'
@@ -343,10 +439,14 @@ _TAGGER_SYSTEM = (
     "technology, API, workflow, business process, feature, file format, or "
     "document category. Every document must receive tags: always provide at "
     "least one topic, and choose the closest doc_type and knowledge_type even "
-    "when the document is short. Put as many meaningful, retrieval-helpful "
-    "subjects as possible in topic, up to the 10-topic limit; prefer specific "
-    "terms over "
-    "generic ones and avoid duplicates. Use vendor_doc for vendor manuals, "
+    "when the document is short. Topic values must be proper nouns or specific "
+    "technical identifiers, such as company names, standards, protocols, product "
+    "names, API names, model numbers, file formats, and domain-specific named "
+    "technologies. Never use boilerplate/legal/footer words as topics, such as "
+    "all, inc, rights, reserved, copyright, confidential, page, table, or figure. "
+    "Put as many meaningful, retrieval-helpful subjects as possible in topic, up "
+    "to the 10-topic limit; prefer specific terms over generic ones and avoid "
+    "duplicates. Use vendor_doc for vendor manuals, "
     "internal_bkm for company BKM, code for source code, mixed when multiple "
     "categories are central, or a concise inferred category such as standard, "
     "specification, test_plan, architecture, tutorial, policy, report, or "

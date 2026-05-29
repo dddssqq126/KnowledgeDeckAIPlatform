@@ -29,7 +29,7 @@ def test_parse_well_formed_json() -> None:
 def test_parse_strips_code_fence() -> None:
     raw = '```json\n{"topic": ["x"], "doc_type": "guide", "intent": "conceptual"}\n```'
     tags = _parse_tags(raw)
-    assert tags.topic == ["x"]
+    assert tags.topic == []
     assert tags.doc_type == "guide"
 
 
@@ -70,9 +70,24 @@ def test_parse_can_tag_5g_documents() -> None:
 
 
 def test_parse_caps_topics_at_ten() -> None:
-    raw = '{"topic": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"]}'
+    raw = (
+        '{"topic": ["topic-01", "topic-02", "topic-03", "topic-04", '
+        '"topic-05", "topic-06", "topic-07", "topic-08", '
+        '"topic-09", "topic-10", "topic-11"]}'
+    )
     tags = _parse_tags(raw)
-    assert tags.topic == ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
+    assert tags.topic == [
+        "topic-01",
+        "topic-02",
+        "topic-03",
+        "topic-04",
+        "topic-05",
+        "topic-06",
+        "topic-07",
+        "topic-08",
+        "topic-09",
+        "topic-10",
+    ]
 
 
 def test_tagger_system_encourages_broad_topic_inference() -> None:
@@ -80,6 +95,8 @@ def test_tagger_system_encourages_broad_topic_inference() -> None:
     assert "any source organization" in _TAGGER_SYSTEM
     assert "up to the 10-topic limit" in _TAGGER_SYSTEM
     assert "Every document must receive tags" in _TAGGER_SYSTEM
+    assert "proper nouns or specific technical identifiers" in _TAGGER_SYSTEM
+    assert "all, inc, rights, reserved" in _TAGGER_SYSTEM
 
 
 def test_parse_garbage_returns_empty() -> None:
@@ -107,10 +124,10 @@ def test_enrich_empty_tags_returns_text_unchanged() -> None:
     assert enrich_text_for_embedding("hello", DocTags.empty()) == "hello"
 
 
-def test_parse_drops_non_string_topics() -> None:
-    raw = '{"topic": ["ok", null, 42, "  ", "good"]}'
+def test_parse_drops_non_string_and_boilerplate_topics() -> None:
+    raw = '{"topic": ["OpenAPI", null, 42, "  ", "all rights reserved", "PCIe", "inc"]}'
     tags = _parse_tags(raw)
-    assert tags.topic == ["ok", "good"]
+    assert tags.topic == ["openapi", "pcie"]
 
 
 def test_parse_non_dict_json_returns_empty() -> None:
@@ -140,7 +157,7 @@ def test_ensure_document_tags_adds_deterministic_fallbacks() -> None:
         "Matter bridge commissioning standard for IoT devices",
         "Matter-Bridge-Setup.pdf",
     )
-    assert tags.topic[:3] == ["matter_bridge_setup", "matter", "bridge"]
+    assert tags.topic[:3] == ["matter_bridge_setup", "matter", "iot"]
     assert tags.doc_type == "guide"
     assert tags.knowledge_type == "standard"
 
@@ -158,7 +175,7 @@ async def test_generate_doc_tags_returns_fallback_tags_on_llm_error(
     tags = await tagger_mod.generate_doc_tags(
         "PCIe troubleshooting runbook", "PCIe-Troubleshooting-Runbook.txt"
     )
-    assert tags.topic[:3] == ["pcie_troubleshooting_runbook", "pcie", "troubleshooting"]
+    assert tags.topic == ["pcie_troubleshooting_runbook", "pcie"]
     assert tags.doc_type == "reference"
     assert tags.knowledge_type == "document"
 
@@ -207,6 +224,6 @@ async def test_generate_doc_tags_fills_missing_llm_fields(monkeypatch) -> None:
         "OpenAPI payment authorization workflow", "payment-api-guide.md"
     )
     assert tags.vendor == "etsi"
-    assert tags.topic[:3] == ["payment_api_guide", "openapi", "payment"]
+    assert tags.topic == ["payment_api_guide", "openapi"]
     assert tags.doc_type == "api"
     assert tags.knowledge_type == "document"

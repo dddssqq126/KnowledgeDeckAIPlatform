@@ -4,15 +4,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     app_name: str = "KnowledgeDeck"
     environment: str = "local"
     api_prefix: str = "/api"
 
-    database_url: str = (
-        "sqlite+aiosqlite:///./knowledgedeck.db"
-    )
+    database_url: str = "sqlite+aiosqlite:///./knowledgedeck.db"
 
     initial_user_username: str = ""
     initial_user_password: str = ""
@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     embedding_api_key: str = "local-dev-key"
     embedding_model: str = "BAAI/bge-m3"
     embedding_dim: int = 1024  # BAAI/bge-m3 outputs 1024-dim vectors
+    # Batch large document embedding requests so one huge file does not create
+    # a single long-running HTTP call that is likely to time out.
+    embedding_batch_size: int = 32
 
     # Local disk mode (no Qdrant server process): set qdrant_path and leave
     # qdrant_url empty. If qdrant_path is empty, url mode is used.
