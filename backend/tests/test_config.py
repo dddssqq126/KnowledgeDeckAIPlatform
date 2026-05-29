@@ -12,6 +12,7 @@ def test_settings_defaults_match_local_development() -> None:
     assert settings.embedding_model == "BAAI/bge-m3"
     assert settings.embedding_batch_size == 32
     assert settings.embedding_batch_max_chars == 24_000
+    assert settings.qdrant_upsert_batch_size == 64
     assert settings.rag_rerank_candidate_k == 40
     assert settings.rag_hybrid_prefetch_limit == 80
     assert settings.rag_per_file_context_limit == 3

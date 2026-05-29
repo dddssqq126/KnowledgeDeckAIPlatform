@@ -9,6 +9,7 @@ cosine) and a named `sparse` vector (BM25-style hashed lexical
 features, with Qdrant IDF modifier). At retrieval we prefetch top-N
 from each, then RRF-fuse with Qdrant's Query API.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -21,7 +22,6 @@ from qdrant_client.http import models as qm
 from app.core.config import get_settings
 from app.features.rag.services.sparse_embed import SparseVec
 from app.features.rag.services.tagger import DocTags
-
 
 _client: QdrantClient | None = None
 
@@ -117,6 +117,50 @@ async def rebuild_collection() -> None:
     await ensure_collection()
 
 
+def _iter_batch_ranges(total: int, batch_size: int) -> list[tuple[int, int]]:
+    """Return half-open index ranges for a positive-size batch window."""
+    batch_size = max(1, batch_size)
+    return [
+        (start, min(start + batch_size, total)) for start in range(0, total, batch_size)
+    ]
+
+
+def _point_struct(
+    *,
+    user_id: int,
+    kb_id: int,
+    file_id: int,
+    filename: str,
+    chunk: dict[str, Any],
+    dense: list[float],
+    sparse: SparseVec,
+    tags: DocTags,
+) -> qm.PointStruct:
+    return qm.PointStruct(
+        id=str(uuid.uuid4()),
+        vector={
+            DENSE_VEC: dense,
+            SPARSE_VEC: qm.SparseVector(indices=sparse.indices, values=sparse.values),
+        },
+        payload={
+            "user_id": user_id,
+            "kb_id": kb_id,
+            "file_id": file_id,
+            "filename": filename,
+            "text": chunk["text"],
+            "page_number": chunk.get("page_number"),
+            "chunk_index": chunk["chunk_index"],
+            "tags_topic": tags.topic,
+            "doc_type": tags.doc_type,
+            "intent": tags.intent,
+            "language": tags.language,
+            "vendor": tags.vendor,
+            "platform": tags.platform,
+            "knowledge_type": tags.knowledge_type,
+        },
+    )
+
+
 async def upsert_chunks(
     *,
     user_id: int,
@@ -138,37 +182,27 @@ async def upsert_chunks(
         )
 
     def _impl() -> None:
-        points = [
-            qm.PointStruct(
-                id=str(uuid.uuid4()),
-                vector={
-                    DENSE_VEC: dense,
-                    SPARSE_VEC: qm.SparseVector(
-                        indices=sparse.indices, values=sparse.values
-                    ),
-                },
-                payload={
-                    "user_id": user_id,
-                    "kb_id": kb_id,
-                    "file_id": file_id,
-                    "filename": filename,
-                    "text": chunk["text"],
-                    "page_number": chunk.get("page_number"),
-                    "chunk_index": chunk["chunk_index"],
-                    "tags_topic": tags.topic,
-                    "doc_type": tags.doc_type,
-                    "intent": tags.intent,
-                    "language": tags.language,
-                    "vendor": tags.vendor,
-                    "platform": tags.platform,
-                    "knowledge_type": tags.knowledge_type,
-                },
-            )
-            for chunk, dense, sparse in zip(
-                chunks, dense_vectors, sparse_vectors, strict=True
-            )
-        ]
-        _get_client().upsert(collection_name=s.qdrant_collection, points=points)
+        client = _get_client()
+        for start, end in _iter_batch_ranges(len(chunks), s.qdrant_upsert_batch_size):
+            points = [
+                _point_struct(
+                    user_id=user_id,
+                    kb_id=kb_id,
+                    file_id=file_id,
+                    filename=filename,
+                    chunk=chunk,
+                    dense=dense,
+                    sparse=sparse,
+                    tags=tags,
+                )
+                for chunk, dense, sparse in zip(
+                    chunks[start:end],
+                    dense_vectors[start:end],
+                    sparse_vectors[start:end],
+                    strict=True,
+                )
+            ]
+            client.upsert(collection_name=s.qdrant_collection, points=points)
 
     await asyncio.to_thread(_impl)
 
@@ -181,7 +215,11 @@ async def delete_by_file(*, file_id: int) -> None:
             collection_name=s.qdrant_collection,
             points_selector=qm.FilterSelector(
                 filter=qm.Filter(
-                    must=[qm.FieldCondition(key="file_id", match=qm.MatchValue(value=file_id))]
+                    must=[
+                        qm.FieldCondition(
+                            key="file_id", match=qm.MatchValue(value=file_id)
+                        )
+                    ]
                 )
             ),
         )
@@ -220,9 +258,7 @@ async def hybrid_search(
             qm.FieldCondition(key="user_id", match=qm.MatchValue(value=user_id))
         ]
         if kb_ids:
-            must.append(
-                qm.FieldCondition(key="kb_id", match=qm.MatchAny(any=kb_ids))
-            )
+            must.append(qm.FieldCondition(key="kb_id", match=qm.MatchAny(any=kb_ids)))
         flt = qm.Filter(must=must)
         response = client.query_points(
             collection_name=s.qdrant_collection,

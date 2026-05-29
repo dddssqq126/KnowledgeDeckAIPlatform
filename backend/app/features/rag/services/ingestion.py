@@ -195,6 +195,7 @@ async def ingest_file(
         logger.info("ingest_complete file_id=%s chunks=%s", file_row.id, len(chunks))
     except Exception as exc:  # pragma: no cover - prototype error path
         logger.exception("ingest_failed file_id=%s", file_row.id)
+        await cleanup_file_vectors(file_id=file_row.id)
         file_row.status = FileStatus.FAILED
         file_row.status_error = str(exc)[:500]
         await session.commit()

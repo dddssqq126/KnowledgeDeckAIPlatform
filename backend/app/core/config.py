@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     qdrant_url: str = ""
     qdrant_path: str = "./qdrant_data"
     qdrant_collection: str = "knowledgedeck"
+    # Cap each Qdrant upsert request so large files do not exceed
+    # HTTP/JSON payload limits.
+    qdrant_upsert_batch_size: int = 64
 
     # RAG retrieval knobs.
     # rag_dense_top_k: how many candidates Qdrant returns before rerank.
