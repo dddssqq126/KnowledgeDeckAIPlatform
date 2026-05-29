@@ -34,6 +34,17 @@ def test_create_user_rejects_existing_username(runner: CliRunner, db_session) ->
     first = runner.invoke(cli_app, ["create-user", "bob", "--password", "pwd"])
     assert first.exit_code == 0
 
-    duplicate = runner.invoke(cli_app, ["create-user", "bob", "--password", "different"])
+    duplicate = runner.invoke(
+        cli_app, ["create-user", "bob", "--password", "different"]
+    )
     assert duplicate.exit_code != 0
     assert "already exists" in duplicate.output.lower()
+
+
+def test_suggest_tag_aliases_empty_database_outputs_json(
+    runner: CliRunner, db_session
+) -> None:
+    result = runner.invoke(cli_app, ["suggest-tag-aliases"])
+
+    assert result.exit_code == 0, result.output
+    assert '"suggestions": []' in result.output
