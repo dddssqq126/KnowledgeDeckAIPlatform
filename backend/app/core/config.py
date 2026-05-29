@@ -66,7 +66,14 @@ class Settings(BaseSettings):
     # rag_rerank_min_score: cross-encoder score threshold; below this the
     #   rerank result is treated as "no relevant context".
     rag_dense_top_k: int = 20
+    # Retrieve a wider candidate set before reranking so the cross-encoder can
+    # recover relevant chunks that were not at the very top of vector fusion.
+    rag_rerank_candidate_k: int = 40
+    rag_hybrid_prefetch_limit: int = 80
     rag_final_top_k: int = 7
+    # Limit repeated chunks from one file so final context covers more likely
+    # documents instead of filling the prompt with near-duplicates.
+    rag_per_file_context_limit: int = 3
     rag_min_score: float = 0.30
     rag_rerank_min_score: float = 0.10
 

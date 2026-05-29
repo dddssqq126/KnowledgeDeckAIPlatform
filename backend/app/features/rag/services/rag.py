@@ -15,6 +15,7 @@ The function returns ("", []) when nothing survives the threshold so
 callers can cleanly fall back to general knowledge without an empty
 "Context:" header confusing the LLM.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -35,6 +36,48 @@ def _build_reranker() -> RerankClient:
         api_key=s.rerank_api_key,
         model=s.rerank_model,
     )
+
+
+def _rerank_passage(hit: dict[str, Any]) -> str:
+    """Include metadata in reranker input so tag/file matches affect ranking."""
+    payload = hit["payload"]
+    topics = payload.get("tags_topic") or []
+    metadata_parts = [
+        f"filename: {payload.get('filename') or 'unknown'}",
+        f"vendor: {payload.get('vendor') or 'unknown'}",
+        f"platform: {payload.get('platform') or 'unknown'}",
+        f"knowledge_type: {payload.get('knowledge_type') or 'unknown'}",
+        f"doc_type: {payload.get('doc_type') or 'unknown'}",
+    ]
+    if topics:
+        metadata_parts.append("topics: " + ", ".join(topics))
+    return " | ".join(metadata_parts) + "\n" + str(payload.get("text") or "")
+
+
+def _select_final_hits(
+    hits: list[dict[str, Any]], ranked: list[tuple[int, float]], *, min_score: float
+) -> list[dict[str, Any]]:
+    """Apply rerank threshold, top-K, and per-file diversity limits."""
+    s = get_settings()
+    final_hits: list[dict[str, Any]] = []
+    per_file_counts: dict[int, int] = {}
+    per_file_limit = max(1, s.rag_per_file_context_limit)
+
+    for orig_idx, rerank_score in ranked:
+        if rerank_score < min_score:
+            continue
+        hit = dict(hits[orig_idx])
+        file_id = hit["payload"].get("file_id")
+        if file_id is not None:
+            seen_count = per_file_counts.get(file_id, 0)
+            if seen_count >= per_file_limit:
+                continue
+            per_file_counts[file_id] = seen_count + 1
+        hit["score"] = rerank_score
+        final_hits.append(hit)
+        if len(final_hits) >= s.rag_final_top_k:
+            break
+    return final_hits
 
 
 def _format_context(hits: list[dict[str, Any]]) -> str:
@@ -85,29 +128,24 @@ async def retrieve_context(
         sparse_vector=sparse_vec,
         user_id=user_id,
         kb_ids=kb_ids,
-        top_k=s.rag_dense_top_k,
+        top_k=s.rag_rerank_candidate_k,
+        prefetch_limit=s.rag_hybrid_prefetch_limit,
     )
     if not dense_hits:
         return "", []
 
     # If the reranker is down, fall back to dense order so retrieval
     # doesn't break the request — log loudly and continue.
-    passages = [h["payload"]["text"] for h in dense_hits]
+    passages = [_rerank_passage(h) for h in dense_hits]
     try:
         ranked = await _build_reranker().score(query, passages)
     except Exception:
         logger.exception("rerank_failed; falling back to dense order")
         ranked = [(i, dense_hits[i]["score"]) for i in range(len(dense_hits))]
 
-    final_hits: list[dict[str, Any]] = []
-    for orig_idx, rerank_score in ranked:
-        if rerank_score < s.rag_rerank_min_score:
-            continue
-        hit = dict(dense_hits[orig_idx])
-        hit["score"] = rerank_score  # overwrite cosine with rerank score
-        final_hits.append(hit)
-        if len(final_hits) >= s.rag_final_top_k:
-            break
+    final_hits = _select_final_hits(
+        dense_hits, ranked, min_score=s.rag_rerank_min_score
+    )
 
     if not final_hits:
         return "", []

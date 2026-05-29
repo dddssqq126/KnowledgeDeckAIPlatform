@@ -4,6 +4,53 @@ from app.features.rag.services import rag
 from app.features.rag.services.sparse_embed import SparseVec
 
 
+def test_rerank_passage_includes_metadata() -> None:
+    passage = rag._rerank_passage(
+        {
+            "payload": {
+                "filename": "pcie-spec.pdf",
+                "text": "link training details",
+                "vendor": "pcisig",
+                "platform": "pcie_5.0",
+                "knowledge_type": "specification",
+                "doc_type": "reference",
+                "tags_topic": ["pcie", "ltssm"],
+            }
+        }
+    )
+
+    assert "filename: pcie-spec.pdf" in passage
+    assert "vendor: pcisig" in passage
+    assert "platform: pcie_5.0" in passage
+    assert "topics: pcie, ltssm" in passage
+    assert passage.endswith("link training details")
+
+
+def test_select_final_hits_limits_repeated_files(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    monkeypatch.setattr(
+        rag,
+        "get_settings",
+        lambda: Settings(rag_final_top_k=4, rag_per_file_context_limit=2),
+    )
+    hits = [
+        {"score": 1.0, "payload": {"file_id": 1, "filename": f"a-{i}.txt"}}
+        for i in range(3)
+    ] + [
+        {"score": 1.0, "payload": {"file_id": 2, "filename": "b.txt"}},
+        {"score": 1.0, "payload": {"file_id": 3, "filename": "c.txt"}},
+    ]
+
+    selected = rag._select_final_hits(
+        hits,
+        [(0, 0.9), (1, 0.8), (2, 0.7), (3, 0.6), (4, 0.5)],
+        min_score=0.0,
+    )
+
+    assert [hit["payload"]["file_id"] for hit in selected] == [1, 1, 2, 3]
+
+
 @pytest.mark.asyncio
 async def test_citations_include_tag_fields(monkeypatch) -> None:
     hit = {
@@ -31,7 +78,9 @@ async def test_citations_include_tag_fields(monkeypatch) -> None:
         return [hit]
 
     class _FakeReranker:
-        async def score(self, _q, _passages):
+        async def score(self, _q, passages):
+            assert "filename: k8s.txt" in passages[0]
+            assert "topics: kubernetes, hpa" in passages[0]
             return [(0, 0.9)]
 
     monkeypatch.setattr(rag.ingestion, "embed_query", fake_embed_query)
@@ -39,7 +88,9 @@ async def test_citations_include_tag_fields(monkeypatch) -> None:
     monkeypatch.setattr(rag.qdrant_store, "hybrid_search", fake_hybrid)
     monkeypatch.setattr(rag, "_build_reranker", lambda: _FakeReranker())
 
-    _context, citations = await rag.retrieve_context(user_id=1, kb_ids=None, query="hpa?")
+    _context, citations = await rag.retrieve_context(
+        user_id=1, kb_ids=None, query="hpa?"
+    )
 
     assert citations == [
         {
