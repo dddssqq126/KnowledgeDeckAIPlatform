@@ -8,6 +8,9 @@ def test_settings_defaults_match_local_development() -> None:
     assert settings.environment == "local"
     assert settings.llm_base_url == "http://knowledgedeck_vllm_chat:8000/v1"
     assert settings.llm_model == "google/gemma-4-E4B-it"
+    assert settings.chat_answer_history_messages == 6
+    assert settings.chat_rewrite_history_messages == 4
+    assert settings.chat_rewrite_history_chars == 180
     assert settings.embedding_base_url == "http://knowledgedeck_vllm_embedding:8001/v1"
     assert settings.embedding_model == "BAAI/bge-m3"
     assert settings.embedding_batch_size == 32

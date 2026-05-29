@@ -90,8 +90,10 @@ practically. The user may ask about Teradyne, Advantest, specific tester
 platforms, internal BKM, troubleshooting procedures, or project code.
 
 Conversation:
-Use prior conversation turns for continuity. Resolve follow-up questions
-against the conversation history when possible.
+Focus on the user's latest message. Use prior turns only to resolve explicit
+follow-up references, pronouns, or user preferences. Do not copy, summarize, or
+continue the previous assistant answer unless the latest user message clearly
+asks you to do so.
 
 Grounding policy:
 When a `Context:` section is provided, treat it as the primary evidence for
@@ -168,11 +170,6 @@ Do not:
   answer.
 - Over-focus on citations at the expense of a clear explanation.
 """.strip()
-# 20 = up to ~10 user/assistant pairs. Conversational chat tends to have
-# short turns, so this is plenty before older turns fall off the window.
-HISTORY_MAX_MESSAGES = 20
-
-
 CODE_INTENT_UNIT_TEST = "unit_test"
 CODE_INTENT_DEBUG = "debug"
 CODE_INTENT_IMPLEMENTATION = "implementation"
@@ -372,11 +369,14 @@ _REWRITE_SYSTEM = (
     "You may receive:\n"
     "- A first-turn question (no conversation history above).\n"
     "- A follow-up question that uses pronouns ('that', 'it', 'this "
-    "one'), elliptical references ('and Python?'), or implicit context "
-    "that only makes sense relative to the prior turns.\n\n"
+    "one') or elliptical references ('and Python?') that only make sense "
+    "relative to recent user turns.\n\n"
     "Apply these rules in order:\n"
-    "1. Resolve all pronouns / references / ellipsis against the history.\n"
-    "2. Replace technical abbreviations with their full canonical form. "
+    "1. Use history only when the latest question explicitly depends on it; "
+    "otherwise ignore history and keep the query focused on the latest question.\n"
+    "2. Resolve pronouns / references / ellipsis against recent history only "
+    "when needed.\n"
+    "3. Replace technical abbreviations with their full canonical form. "
     "Drop the abbreviation entirely — do NOT keep it in parentheses, "
     "because parenthetical noise lowers cross-encoder rerank scores. "
     "Examples:\n"
@@ -385,12 +385,12 @@ _REWRITE_SYSTEM = (
     "   gpu -> graphics processing unit\n"
     "   ml  -> machine learning\n"
     "   db  -> database\n"
-    "3. If the question is a single bare term (one word or one acronym), "
+    "4. If the question is a single bare term (one word or one acronym), "
     "reformulate it into a natural question. Examples:\n"
     "   'Kubernetes'  -> 'What is Kubernetes?'\n"
     "   'embeddings'  -> 'What are embeddings?'\n"
     "   'k8s'         -> 'What is Kubernetes?'\n"
-    "4. If the question is already a complete natural-language question "
+    "5. If the question is already a complete natural-language question "
     "with no abbreviations and no references to resolve, output it "
     "unchanged.\n\n"
     "Output: ONE LINE. The rewritten query only. No quotation marks. No "
@@ -477,14 +477,19 @@ async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -
         return _symbol_lookup_query(symbol)
 
     if history:
-        # Multi-turn: feed the rewriter the recent history so it can
-        # resolve pronouns/ellipsis. Long assistant turns are clipped
-        # because only the gist matters for reference resolution.
-        recent = history[-6:]
+        # Multi-turn: feed only a very small recent window so the rewriter can
+        # resolve short follow-ups without dragging in old answer content.
+        s = get_settings()
+        recent = history[-max(0, s.chat_rewrite_history_messages) :]
+        max_chars = max(40, s.chat_rewrite_history_chars)
         transcript_lines: list[str] = []
         for m in recent:
             role = "User" if m.role is ChatRole.USER else "Assistant"
-            body = m.content if len(m.content) <= 400 else m.content[:400] + "..."
+            body = (
+                m.content
+                if len(m.content) <= max_chars
+                else m.content[:max_chars] + "..."
+            )
             transcript_lines.append(f"{role}: {body}")
         prompt = (
             "Conversation history:\n"
@@ -531,9 +536,15 @@ def _build_llm() -> ChatOpenAI:
     )
 
 
+def _history_window(rows: list[ChatMessage], max_messages: int) -> list[ChatMessage]:
+    return rows[-max(0, max_messages) :] if max_messages else []
+
+
 def _history_to_messages(rows: list[ChatMessage]) -> list[HumanMessage | AIMessage]:
+    s = get_settings()
+    max_messages = max(0, s.chat_answer_history_messages)
     msgs: list[HumanMessage | AIMessage] = []
-    for r in rows[-HISTORY_MAX_MESSAGES:]:
+    for r in _history_window(rows, max_messages):
         if r.role is ChatRole.USER:
             msgs.append(HumanMessage(content=r.content))
         else:

@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # internal model id (sent to vLLM) and the user-facing label can change
     # independently.
     llm_model_label: str = "Gemma 4 E4B"
+    # Keep answer generation focused on the latest turn. Older turns still
+    # exist in DB, but only this many recent messages are sent to the LLM.
+    chat_answer_history_messages: int = 6
+    # Query rewrite only needs enough history to resolve short follow-ups.
+    chat_rewrite_history_messages: int = 4
+    chat_rewrite_history_chars: int = 180
 
     embedding_base_url: str = "http://knowledgedeck_vllm_embedding:8001/v1"
     embedding_api_key: str = "local-dev-key"
