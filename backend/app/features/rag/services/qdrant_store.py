@@ -20,6 +20,7 @@ from qdrant_client.http import models as qm
 
 from app.core.config import get_settings
 from app.features.rag.services.sparse_embed import SparseVec
+from app.features.rag.services.tagger import DocTags
 
 
 _client: QdrantClient | None = None
@@ -84,6 +85,20 @@ async def ensure_collection() -> None:
                 field_name=field,
                 field_schema=qm.PayloadSchemaType.INTEGER,
             )
+        for field in (
+            "doc_type",
+            "intent",
+            "tags_topic",
+            "language",
+            "vendor",
+            "platform",
+            "knowledge_type",
+        ):
+            client.create_payload_index(
+                collection_name=s.qdrant_collection,
+                field_name=field,
+                field_schema=qm.PayloadSchemaType.KEYWORD,
+            )
 
     await asyncio.to_thread(_impl)
 
@@ -111,6 +126,7 @@ async def upsert_chunks(
     chunks: list[dict[str, Any]],
     dense_vectors: list[list[float]],
     sparse_vectors: list[SparseVec],
+    tags: DocTags,
 ) -> None:
     """`chunks` is a list of {text, page_number?, chunk_index} dicts. The
     three vector lists must be the same length as chunks."""
@@ -139,6 +155,13 @@ async def upsert_chunks(
                     "text": chunk["text"],
                     "page_number": chunk.get("page_number"),
                     "chunk_index": chunk["chunk_index"],
+                    "tags_topic": tags.topic,
+                    "doc_type": tags.doc_type,
+                    "intent": tags.intent,
+                    "language": tags.language,
+                    "vendor": tags.vendor,
+                    "platform": tags.platform,
+                    "knowledge_type": tags.knowledge_type,
                 },
             )
             for chunk, dense, sparse in zip(
@@ -187,6 +210,12 @@ async def hybrid_search(
     s = get_settings()
 
     def _impl() -> list[dict[str, Any]]:
+        client = _get_client()
+        # No collection yet (e.g. nothing has ever been ingested) → no hits.
+        # Returning [] lets the caller degrade to general knowledge instead
+        # of the request failing with a Qdrant 404.
+        if not client.collection_exists(s.qdrant_collection):
+            return []
         must: list[qm.FieldCondition] = [
             qm.FieldCondition(key="user_id", match=qm.MatchValue(value=user_id))
         ]
@@ -195,7 +224,7 @@ async def hybrid_search(
                 qm.FieldCondition(key="kb_id", match=qm.MatchAny(any=kb_ids))
             )
         flt = qm.Filter(must=must)
-        response = _get_client().query_points(
+        response = client.query_points(
             collection_name=s.qdrant_collection,
             prefetch=[
                 qm.Prefetch(
@@ -224,5 +253,62 @@ async def hybrid_search(
                 continue
             out.append({"score": p.score, "payload": p.payload})
         return out
+
+    return await asyncio.to_thread(_impl)
+
+
+async def list_file_tags(*, user_id: int, kb_id: int) -> list[dict[str, Any]]:
+    """Per-file tag summary for one KB, read from the Qdrant payload.
+
+    Returns one dict per file_id with tag fields and chunk_count. Tags are
+    per-document, so they're taken from the first point seen for each file;
+    chunk_count counts that file's points. Returns [] when the collection does
+    not exist yet.
+    """
+    s = get_settings()
+
+    def _impl() -> list[dict[str, Any]]:
+        client = _get_client()
+        if not client.collection_exists(s.qdrant_collection):
+            return []
+        flt = qm.Filter(
+            must=[
+                qm.FieldCondition(key="user_id", match=qm.MatchValue(value=user_id)),
+                qm.FieldCondition(key="kb_id", match=qm.MatchValue(value=kb_id)),
+            ]
+        )
+        agg: dict[int, dict[str, Any]] = {}
+        offset = None
+        while True:
+            points, offset = client.scroll(
+                collection_name=s.qdrant_collection,
+                scroll_filter=flt,
+                with_payload=True,
+                with_vectors=False,
+                limit=256,
+                offset=offset,
+            )
+            for p in points:
+                pl = p.payload or {}
+                fid = pl.get("file_id")
+                if fid is None:
+                    continue
+                entry = agg.get(fid)
+                if entry is None:
+                    agg[fid] = {
+                        "file_id": fid,
+                        "doc_type": pl.get("doc_type"),
+                        "intent": pl.get("intent"),
+                        "tags_topic": pl.get("tags_topic") or [],
+                        "vendor": pl.get("vendor") or "unknown",
+                        "platform": pl.get("platform") or "unknown",
+                        "knowledge_type": pl.get("knowledge_type") or "unknown",
+                        "chunk_count": 1,
+                    }
+                else:
+                    entry["chunk_count"] += 1
+            if offset is None:
+                break
+        return list(agg.values())
 
     return await asyncio.to_thread(_impl)

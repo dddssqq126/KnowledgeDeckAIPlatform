@@ -38,8 +38,11 @@ def _build_reranker() -> RerankClient:
 
 
 def _format_context(hits: list[dict[str, Any]]) -> str:
-    """Render rerank-survivors into the `[i] filename (p.N)\\n<text>` blocks
-    we paste into the prompt."""
+    """Render rerank-survivors into source blocks with metadata.
+
+    The metadata line lets the answer prompt reason about vendor/platform
+    applicability without using hard filters that could hurt recall.
+    """
     if not hits:
         return ""
     out: list[str] = []
@@ -47,7 +50,17 @@ def _format_context(hits: list[dict[str, Any]]) -> str:
         payload = hit["payload"]
         page = payload.get("page_number")
         loc = f" (p.{page})" if page else ""
-        out.append(f"[{i}] {payload['filename']}{loc}\n{payload['text']}")
+        topics = payload.get("tags_topic") or []
+        topic_text = ",".join(topics) if topics else "unknown"
+        metadata = (
+            f"source_id={i} filename={payload['filename']}{loc} "
+            f"vendor={payload.get('vendor') or 'unknown'} "
+            f"platform={payload.get('platform') or 'unknown'} "
+            f"knowledge_type={payload.get('knowledge_type') or 'unknown'} "
+            f"doc_type={payload.get('doc_type') or 'unknown'} "
+            f"topic={topic_text}"
+        )
+        out.append(f"[{i}] {metadata}\n{payload['text']}")
     return "\n\n".join(out)
 
 
@@ -107,5 +120,15 @@ async def retrieve_context(
         if fid in seen:
             continue
         seen.add(fid)
-        citations.append({"file_id": fid, "filename": hit["payload"]["filename"]})
+        citations.append(
+            {
+                "file_id": fid,
+                "filename": hit["payload"]["filename"],
+                "doc_type": hit["payload"].get("doc_type"),
+                "tags_topic": hit["payload"].get("tags_topic") or [],
+                "vendor": hit["payload"].get("vendor") or "unknown",
+                "platform": hit["payload"].get("platform") or "unknown",
+                "knowledge_type": hit["payload"].get("knowledge_type") or "unknown",
+            }
+        )
     return context, citations

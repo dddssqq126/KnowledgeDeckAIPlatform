@@ -23,7 +23,15 @@ from sqlalchemy.orm import selectinload
 
 from app.shared.api.deps import get_current_user
 from app.db.base import async_session_factory, get_db
-from app.db.models import ChatMessage, ChatRole, ChatSession, ChatSessionShare, User
+from app.db.models import (
+    ChatFeedbackType,
+    ChatMessage,
+    ChatMessageFeedback,
+    ChatRole,
+    ChatSession,
+    ChatSessionShare,
+    User,
+)
 from app.features.chat.services import chat_service
 from app.features.rag.services import rag
 
@@ -68,6 +76,17 @@ class StreamRequest(BaseModel):
     message: str = Field(min_length=1)
     use_rag: bool = False
     kb_ids: list[int] | None = None
+
+
+class MessageFeedbackIn(BaseModel):
+    feedback: ChatFeedbackType
+
+
+class MessageFeedbackOut(BaseModel):
+    message_id: int
+    feedback: str
+    content: str
+    updated_at: str
 
 
 def _detect_code_assist_intent(message: str) -> str | None:
@@ -299,6 +318,59 @@ async def update_session(
     return _session_out(s)
 
 
+
+
+@router.post("/messages/{message_id}/feedback", response_model=MessageFeedbackOut)
+async def upsert_message_feedback(
+    message_id: int,
+    body: MessageFeedbackIn,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> MessageFeedbackOut:
+    message = await session.scalar(
+        select(ChatMessage)
+        .join(ChatSession, ChatSession.id == ChatMessage.session_id)
+        .where(
+            ChatMessage.id == message_id,
+            ChatMessage.role == ChatRole.ASSISTANT,
+            ChatSession.owner_user_id == user.id,
+            ChatSession.deleted_at.is_(None),
+        )
+    )
+    if message is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="message_not_found")
+
+    row = await session.scalar(
+        select(ChatMessageFeedback).where(
+            ChatMessageFeedback.message_id == message_id,
+            ChatMessageFeedback.owner_user_id == user.id,
+        )
+    )
+    now = datetime.now(timezone.utc)
+    if row is None:
+        row = ChatMessageFeedback(
+            message_id=message_id,
+            owner_user_id=user.id,
+            feedback=body.feedback,
+            content=message.content,
+            updated_at=now,
+        )
+        session.add(row)
+    else:
+        row.feedback = body.feedback
+        row.content = message.content
+        row.updated_at = now
+
+    await session.commit()
+    await session.refresh(row)
+    return MessageFeedbackOut(
+        message_id=row.message_id,
+        feedback=row.feedback.value,
+        content=row.content,
+        updated_at=row.updated_at.isoformat(),
+    )
+
+
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(
     session_id: int,
@@ -350,14 +422,12 @@ async def stream_chat(
             context = ""
             rag_query: str | None = None
             code_assist_intent: str | None = None
+            query_tags: chat_service.QueryTags | None = None
             if use_rag:
                 # Multi-turn follow-ups ("and Python?", "what about that one?")
                 # are not standalone — embedding them directly drags retrieval
                 # off-topic. Rewriter resolves references against history into
                 # a self-contained query before we hit the vector store.
-                rag_query = await chat_service.rewrite_for_retrieval(
-                    history=history, user_message=user_message
-                )
                 code_assist_intent = _detect_code_assist_intent(user_message)
                 code_intent = chat_service.detect_code_assist_intent(user_message)
                 if code_intent is not None:
@@ -376,6 +446,7 @@ async def stream_chat(
                     rag_query = await chat_service.rewrite_for_retrieval(
                         history=history, user_message=user_message
                     )
+                query_tags = chat_service.detect_query_tags(user_message, rag_query)
                 context, citations = await rag.retrieve_context(
                     user_id=user_id, kb_ids=kb_ids, query=rag_query
                 )
@@ -387,6 +458,7 @@ async def stream_chat(
                 context=context,
                 rag_query=rag_query,
                 code_assist_intent=code_assist_intent,
+                query_tags=query_tags,
             ):
                 collected.append(token)
                 yield _sse("token", {"text": token})

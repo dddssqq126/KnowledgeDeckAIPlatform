@@ -4,14 +4,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import RagDatabasesPage from "./page";
 import {
   downloadKnowledgeFile,
+  listFileTags,
   listFiles,
   listKnowledgeBases,
+  updateFileTags,
 } from "../../../lib/knowledge-bases";
 
 vi.mock("../../../lib/knowledge-bases", () => ({
   downloadKnowledgeFile: vi.fn().mockResolvedValue(undefined),
+  listFileTags: vi.fn(),
   listFiles: vi.fn(),
   listKnowledgeBases: vi.fn(),
+  updateFileTags: vi.fn(),
 }));
 
 describe("RagDatabasesPage", () => {
@@ -41,6 +45,7 @@ describe("RagDatabasesPage", () => {
           ]
         : [file(21, 2, "market_map.pdf", "pdf")],
     );
+    vi.mocked(listFileTags).mockResolvedValue([]);
   });
 
   it("renders imported files with download buttons", async () => {
@@ -52,6 +57,106 @@ describe("RagDatabasesPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Download react_hooks.txt" }));
 
     expect(downloadKnowledgeFile).toHaveBeenCalledWith(11, "react_hooks.txt");
+  });
+
+  it("shows real chunk count and tag chips per file", async () => {
+    vi.mocked(listKnowledgeBases).mockResolvedValue([
+      {
+        id: 1,
+        name: "kb",
+        description: null,
+        file_count: 1,
+        created_at: "2026-05-06T00:00:00Z",
+      },
+    ]);
+    vi.mocked(listFiles).mockResolvedValue([
+      file(1, 1, "k8s.txt", "txt"),
+    ]);
+    vi.mocked(listFileTags).mockResolvedValue([
+      {
+        file_id: 1,
+        doc_type: "guide",
+        intent: "how_to",
+        tags_topic: ["kubernetes"],
+        vendor: "advantest",
+        platform: "v93000",
+        knowledge_type: "internal_bkm",
+        chunk_count: 12,
+      },
+    ]);
+
+    render(<RagDatabasesPage />);
+
+    expect(await screen.findByText("k8s.txt")).toBeInTheDocument();
+    expect(screen.getByText("advantest")).toBeInTheDocument();
+    expect(screen.getByText("v93000")).toBeInTheDocument();
+    expect(screen.getByText("internal_bkm")).toBeInTheDocument();
+    expect(screen.getByText("guide")).toBeInTheDocument();
+    expect(screen.getByText("#kubernetes")).toBeInTheDocument();
+    expect(screen.getByText(/12 vectors/)).toBeInTheDocument();
+  });
+
+  it("edits file vendor/platform/type tags", async () => {
+    vi.mocked(listKnowledgeBases).mockResolvedValue([
+      {
+        id: 1,
+        name: "kb",
+        description: null,
+        file_count: 1,
+        created_at: "2026-05-06T00:00:00Z",
+      },
+    ]);
+    vi.mocked(listFiles).mockResolvedValue([
+      file(1, 1, "flow.txt", "txt"),
+    ]);
+    vi.mocked(listFileTags).mockResolvedValue([
+      {
+        file_id: 1,
+        doc_type: "guide",
+        intent: "how_to",
+        tags_topic: [],
+        vendor: "unknown",
+        platform: "unknown",
+        knowledge_type: "unknown",
+        chunk_count: 3,
+      },
+    ]);
+    vi.mocked(updateFileTags).mockResolvedValue({
+      file_id: 1,
+      doc_type: "guide",
+      intent: "how_to",
+      tags_topic: [],
+      vendor: "teradyne",
+      platform: "j750",
+      knowledge_type: "vendor_doc",
+      chunk_count: 3,
+    });
+
+    render(<RagDatabasesPage />);
+
+    expect(await screen.findByText("flow.txt")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit tags" }));
+    fireEvent.change(screen.getByLabelText("Vendor"), {
+      target: { value: "teradyne" },
+    });
+    fireEvent.change(screen.getByLabelText("Platform"), {
+      target: { value: "j750" },
+    });
+    fireEvent.change(screen.getByLabelText("Knowledge type"), {
+      target: { value: "vendor_doc" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save tags" }));
+
+    await waitFor(() => {
+      expect(updateFileTags).toHaveBeenCalledWith(1, 1, {
+        vendor: "teradyne",
+        platform: "j750",
+        knowledge_type: "vendor_doc",
+      });
+    });
+    expect(await screen.findByText("teradyne")).toBeInTheDocument();
+    expect(screen.getByText("j750")).toBeInTheDocument();
+    expect(screen.getByText("vendor_doc")).toBeInTheDocument();
   });
 
   it("filters imported files by filename", async () => {

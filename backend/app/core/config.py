@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # rag_rerank_min_score: cross-encoder score threshold; below this the
     #   rerank result is treated as "no relevant context".
     rag_dense_top_k: int = 20
-    rag_final_top_k: int = 5
+    rag_final_top_k: int = 7
     rag_min_score: float = 0.30
     rag_rerank_min_score: float = 0.10
 
@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     # mid-sentence cuts at the cost of more vectors per file.
     chunk_chars: int = 1200
     chunk_overlap: int = 150
+
+    # LLM document tagging (see docs/superpowers/specs/2026-05-27-tag-aware-rag-design.md).
+    # When enabled, ingestion makes one LLM call per document to produce
+    # topic/doc_type/intent tags and folds them into the embedded text.
+    rag_tagging_enabled: bool = True
+    rag_tag_max_chars: int = 4000  # head of the doc sent to the tagger LLM
 
     gpu_device: str = "0"
     vllm_chat_gpu_memory_utilization: float = 0.70

@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -105,10 +106,105 @@ SYSTEM_PROMPT = (
     "For general document Q&A, keep the original concise document-answering "
     "behavior; do not make every response code-only. Do not change citation "
     "formatting requirements.\n\n"
+    "Document answer discipline:\n"
+    "- For questions about the user's documents, answer ONLY from the provided "
+    "`Context:`. Do not fabricate facts that are not present in it.\n"
+    "- If `Context:` is present but insufficient to answer, say so plainly "
+    "(e.g. 'the documents don't cover this' / '資料不足以回答') instead of guessing.\n"
+    "- If the question is ambiguous, ask ONE clarifying question before "
+    "answering.\n\n"
     "Be concise. Do not refuse to recall information the user has shared "
     "earlier in this conversation — the conversation history above is yours "
     "to use."
 )
+
+SYSTEM_PROMPT = """
+You are KnowledgeDeck, an internal engineering knowledge assistant for
+semiconductor test knowledge, company BKM, vendor documents, and source code.
+
+Primary goal:
+Help users understand and apply internal knowledge clearly, accurately, and
+practically. The user may ask about Teradyne, Advantest, specific tester
+platforms, internal BKM, troubleshooting procedures, or project code.
+
+Conversation:
+Use prior conversation turns for continuity. Resolve follow-up questions
+against the conversation history when possible.
+
+Grounding policy:
+When a `Context:` section is provided, treat it as the primary evidence for
+questions about the user's documents, company BKM, vendor platforms, or
+codebase. Do not invent internal facts, procedures, APIs, platform behavior,
+limits, or BKM that are not supported by the Context. If Context is absent or
+irrelevant, you may answer from general knowledge, but clearly say that the
+answer is not grounded in the uploaded knowledge base. If Context is partially
+sufficient, answer the supported part first, then clearly list what is missing.
+
+Vendor/platform discipline:
+Pay close attention to source metadata such as vendor, platform,
+knowledge_type, doc_type, filename, page, and topic. Do not mix Teradyne and
+Advantest guidance unless the user asks for comparison or the Context
+explicitly supports a shared conclusion. Do not treat UltraFLEX, J750, V93000,
+and T2000 as interchangeable. If retrieved sources are from a different vendor
+or platform than the user's question, warn the user before applying them.
+
+Evidence priority:
+Prefer sources in this order:
+1. Same vendor and same platform internal BKM.
+2. Same vendor and same platform vendor documentation.
+3. Same vendor but generic platform documentation.
+4. Internal code or implementation details when the question is about code
+   behavior.
+5. Other vendor/platform material only for comparison or clearly labeled
+   reference.
+
+Answer style:
+Answer in Traditional Chinese by default unless the user asks for another
+language. Use a complete engineering explanation, not an overly short reply.
+Make the answer easy to understand for an engineer who may not know the
+document set.
+
+For document/BKM questions, use this structure when useful:
+- 結論
+- 適用範圍：vendor / platform / knowledge type
+- 依據：briefly mention the relevant source files or source numbers
+- 詳細說明：explain the mechanism, rule, or procedure
+- 操作步驟：if the question asks how to do something
+- 注意事項 / 風險
+- 文件不足或不確定處
+- 建議下一步
+
+For code questions:
+Inspect retrieved code context first. Prefer existing functions, classes,
+modules, signatures, call sites, and tests from the Context. Do not invent
+project APIs. If code context is insufficient, say what code artifact is
+missing and provide best-effort general guidance separately.
+
+Conflict handling:
+If sources disagree, do not hide the conflict. State the conflicting sources,
+explain the difference, and say which one appears more applicable based on
+vendor/platform/knowledge_type. If applicability cannot be determined, ask one
+clarifying question.
+
+Citation behavior:
+When using Context, cite source numbers or filenames naturally in the answer.
+Do not cite sources that were not used. When making an inference, label it as
+an inference.
+
+Insufficient evidence:
+If the documents do not contain enough information, say so directly. Use
+wording like:
+「目前文件中可以確認的是...」
+「目前文件沒有明確說明...」
+「以下是一般工程推論，尚需用內部 BKM 或 vendor doc 確認...」
+
+Do not:
+- Pretend unsupported information came from the documents.
+- Merge different vendors/platforms without warning.
+- Give a single definitive procedure when the evidence only supports a partial
+  answer.
+- Over-focus on citations at the expense of a clear explanation.
+""".strip()
 # 20 = up to ~10 user/assistant pairs. Conversational chat tends to have
 # short turns, so this is plenty before older turns fall off the window.
 HISTORY_MAX_MESSAGES = 20
@@ -171,6 +267,65 @@ _CODE_RETRIEVAL_TARGETS = {
         "signatures, usages, imports, examples, and patterns."
     ),
 }
+
+
+@dataclass(frozen=True)
+class QueryTags:
+    vendor: str = "unknown"
+    platform: str = "unknown"
+    knowledge_type: str = "unknown"
+
+    def has_signal(self) -> bool:
+        return any(
+            value != "unknown"
+            for value in (self.vendor, self.platform, self.knowledge_type)
+        )
+
+    def as_prompt_text(self) -> str:
+        return (
+            "Query intent tags detected from the user request and retrieval "
+            f"query: vendor={self.vendor}, platform={self.platform}, "
+            f"knowledge_type={self.knowledge_type}. These tags are soft "
+            "guidance only; do not hard-filter evidence, but prefer matching "
+            "source metadata and warn about mismatches."
+        )
+
+
+def detect_query_tags(*texts: str | None) -> QueryTags:
+    """Detect vendor/platform/category hints from user and rewritten queries."""
+    haystack = " ".join(t for t in texts if t).casefold()
+
+    vendor = "unknown"
+    if any(term in haystack for term in ("teradyne", "泰瑞達", "泰瑞达")):
+        vendor = "teradyne"
+    elif any(term in haystack for term in ("advantest", "艾德萬", "爱德万")):
+        vendor = "advantest"
+
+    platform = "unknown"
+    for canonical, aliases in (
+        ("ultraflex", ("ultraflex", "ultra flex")),
+        ("j750", ("j750", "j 750")),
+        ("v93000", ("v93000", "v93k", "sm93000", "sm 93000")),
+        ("t2000", ("t2000", "t 2000")),
+    ):
+        if any(alias in haystack for alias in aliases):
+            platform = canonical
+            break
+
+    knowledge_type = "unknown"
+    if any(term in haystack for term in ("bkm", "best known method")):
+        knowledge_type = "internal_bkm"
+    elif any(
+        term in haystack
+        for term in ("code", "source code", "function", "class", "api", "程式", "代碼")
+    ):
+        knowledge_type = "code"
+
+    return QueryTags(
+        vendor=vendor,
+        platform=platform,
+        knowledge_type=knowledge_type,
+    )
 
 
 def detect_code_assist_intent(user_message: str) -> str | None:
@@ -263,7 +418,6 @@ _REWRITE_SYSTEM = (
 )
 
 
-async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -> str:
 def detect_symbol_lookup(user_message: str) -> str | None:
     """Return the exact code symbol requested by a symbol lookup, if any.
 
@@ -416,6 +570,7 @@ async def stream_answer(
     context: str,
     rag_query: str | None = None,
     code_assist_intent: str | None = None,
+    query_tags: QueryTags | None = None,
 ) -> AsyncIterator[str]:
     """Yields LLM token chunks as plain strings."""
     messages: list[Any] = [SystemMessage(content=SYSTEM_PROMPT)]
@@ -426,6 +581,8 @@ async def stream_answer(
         messages.append(
             SystemMessage(content=f"Retrieval query used to select context: {rag_query}")
         )
+    if query_tags and query_tags.has_signal():
+        messages.append(SystemMessage(content=query_tags.as_prompt_text()))
     if code_assist_intent:
         messages.append(
             SystemMessage(

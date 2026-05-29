@@ -17,7 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.models import FileStatus, KnowledgeFile
-from app.features.rag.services import document_parser, qdrant_store, sparse_embed, text_splitter
+from app.features.rag.services import (
+    document_parser,
+    qdrant_store,
+    sparse_embed,
+    tagger,
+    text_splitter,
+)
 from app.features.rag.services.model_clients import EmbeddingClient
 
 logger = logging.getLogger(__name__)
@@ -81,10 +87,26 @@ async def ingest_file(
             await session.commit()
             return
 
+        s = get_settings()
+        if s.rag_tagging_enabled:
+            full_text = "\n".join(seg.text for seg in segments)[: s.rag_tag_max_chars]
+            tags = await tagger.generate_doc_tags(full_text, file_row.filename)
+        else:
+            tags = tagger.DocTags.empty()
+        tags = tags.with_overrides(
+            vendor=file_row.tag_vendor,
+            platform=file_row.tag_platform,
+            knowledge_type=file_row.tag_knowledge_type,
+        )
+        file_row.tag_vendor = tags.vendor
+        file_row.tag_platform = tags.platform
+        file_row.tag_knowledge_type = tags.knowledge_type
+
         await qdrant_store.ensure_collection()
-        texts = [c["text"] for c in chunks]
-        dense_vectors = await _embed(texts)
-        sparse_vectors = await sparse_embed.embed_passages(texts)
+        raw_texts = [c["text"] for c in chunks]
+        embed_texts = [tagger.enrich_text_for_embedding(t, tags) for t in raw_texts]
+        dense_vectors = await _embed(embed_texts)
+        sparse_vectors = await sparse_embed.embed_passages(embed_texts)
         await qdrant_store.upsert_chunks(
             user_id=file_row.owner_user_id,
             kb_id=file_row.knowledge_base_id,
@@ -93,6 +115,7 @@ async def ingest_file(
             chunks=chunks,
             dense_vectors=dense_vectors,
             sparse_vectors=sparse_vectors,
+            tags=tags,
         )
 
         file_row.status = FileStatus.INDEXED

@@ -1,17 +1,20 @@
 "use client";
 
-import { Bot, Check, Copy, User } from "lucide-react";
+import { Bot, Check, Copy, ThumbsDown, ThumbsUp, User } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { ChatInput } from "./ChatInput";
+import { CitationList } from "./CitationList";
 import { useChatSessionsStore } from "../lib/chat-store";
 import {
   type ChatMessage,
   type Citation,
+  type ChatFeedback,
   getSession,
+  sendMessageFeedback,
   streamChat,
 } from "../lib/chat";
 import { useKbStore } from "../lib/kb-store";
@@ -240,25 +243,63 @@ function MessageBubble({
               {streaming ? <span className="ml-1 animate-pulse">▍</span> : null}
             </div>
           )}
-          {message.citations && message.citations.length > 0 ? (
-            <div className="mt-2 border-t border-zinc-700 pt-2 text-xs text-zinc-400">
-              Sources:{" "}
-              {message.citations.map((c, i) => (
-                <span key={c.file_id}>
-                  {i > 0 ? ", " : ""}
-                  {c.filename}
-                </span>
-              ))}
-            </div>
+          {message.citations ? (
+            <CitationList citations={message.citations} />
           ) : null}
         </div>
         <div className="flex items-center gap-2 px-1 text-[10px] text-zinc-500">
           <span>{ts}</span>
           {!isUser && !streaming && message.content ? (
-            <CopyButton text={message.content} />
+            <MessageActions message={message} />
           ) : null}
         </div>
       </div>
+    </div>
+  );
+}
+
+
+
+function MessageActions({ message }: { message: ChatMessage }) {
+  const [selected, setSelected] = useState<ChatFeedback | null>(null);
+  const [sending, setSending] = useState(false);
+
+  async function vote(feedback: ChatFeedback) {
+    if (sending || message.id <= 0) return;
+    setSending(true);
+    try {
+      await sendMessageFeedback(message.id, feedback);
+      setSelected(feedback);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <CopyButton text={message.content} />
+      <button
+        type="button"
+        onClick={() => vote("like")}
+        disabled={sending || message.id <= 0}
+        aria-label="Like response"
+        className={`rounded px-1 py-0.5 hover:bg-zinc-800 hover:text-zinc-100 ${
+          selected === "like" ? "text-green-400" : ""
+        }`}
+      >
+        <ThumbsUp className="h-3 w-3" />
+      </button>
+      <button
+        type="button"
+        onClick={() => vote("dislike")}
+        disabled={sending || message.id <= 0}
+        aria-label="Dislike response"
+        className={`rounded px-1 py-0.5 hover:bg-zinc-800 hover:text-zinc-100 ${
+          selected === "dislike" ? "text-red-400" : ""
+        }`}
+      >
+        <ThumbsDown className="h-3 w-3" />
+      </button>
     </div>
   );
 }
