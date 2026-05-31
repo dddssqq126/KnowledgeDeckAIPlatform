@@ -76,6 +76,7 @@ class StreamRequest(BaseModel):
     message: str = Field(min_length=1)
     use_rag: bool = False
     kb_ids: list[int] | None = None
+    deep_mode: bool = False
 
 
 class MessageFeedbackIn(BaseModel):
@@ -413,6 +414,7 @@ async def stream_chat(
     user_message = body.message
     use_rag = body.use_rag
     kb_ids = body.kb_ids
+    deep_mode = body.deep_mode
 
     async def generator() -> AsyncIterator[str]:
         try:
@@ -450,6 +452,7 @@ async def stream_chat(
                     kb_ids=kb_ids,
                     query=rag_query,
                     query_tags=query_tags,
+                    deep_mode=deep_mode,
                 )
 
             collected: list[str] = []
@@ -467,15 +470,17 @@ async def stream_chat(
             # Persist the assistant turn in a fresh session — request session
             # already returned to the pool when the response started streaming.
             factory = async_session_factory()
+            assistant_message_id: int | None = None
             async with factory() as save_session:
-                save_session.add(
-                    ChatMessage(
-                        session_id=session_id,
-                        role=ChatRole.ASSISTANT,
-                        content="".join(collected),
-                        citations=citations or None,
-                    )
+                assistant_message = ChatMessage(
+                    session_id=session_id,
+                    role=ChatRole.ASSISTANT,
+                    content="".join(collected),
+                    citations=citations or None,
                 )
+                save_session.add(assistant_message)
+                await save_session.flush()
+                assistant_message_id = assistant_message.id
                 touched = await save_session.scalar(
                     select(ChatSession).where(ChatSession.id == session_id)
                 )
@@ -484,7 +489,7 @@ async def stream_chat(
                 await save_session.commit()
 
             yield _sse("citations", {"items": citations})
-            yield _sse("done", {})
+            yield _sse("done", {"message_id": assistant_message_id})
         except Exception as exc:  # pragma: no cover - prototype
             logger.exception("chat_stream_failed session=%s", session_id)
             yield _sse("error", {"message": str(exc)[:300]})

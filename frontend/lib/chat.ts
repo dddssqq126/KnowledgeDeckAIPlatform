@@ -102,12 +102,13 @@ export type StreamRequest = {
   message: string;
   use_rag: boolean;
   kb_ids: number[] | null;
+  deep_mode?: boolean;
 };
 
 export type StreamHandlers = {
   onToken: (text: string) => void;
   onCitations: (items: Citation[]) => void;
-  onDone: () => void;
+  onDone: (data?: { message_id?: number }) => void;
   onError: (message: string) => void;
 };
 
@@ -178,7 +179,7 @@ export async function streamChat(
       }
       if (event === "token") handlers.onToken(parsed.text ?? "");
       else if (event === "citations") handlers.onCitations(parsed.items ?? []);
-      else if (event === "done") handlers.onDone();
+      else if (event === "done") handlers.onDone(parsed);
       else if (event === "error") handlers.onError(parsed.message ?? "stream error");
     }
   }

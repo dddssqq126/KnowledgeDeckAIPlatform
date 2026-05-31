@@ -29,6 +29,22 @@ from app.features.rag.services.model_clients import RerankClient
 logger = logging.getLogger(__name__)
 
 
+def _retrieval_profile(*, deep_mode: bool) -> dict[str, int]:
+    """Return candidate/context sizes for normal vs deeper retrieval."""
+    s = get_settings()
+    if not deep_mode:
+        return {
+            "candidate_k": s.rag_rerank_candidate_k,
+            "prefetch_limit": s.rag_hybrid_prefetch_limit,
+            "final_top_k": s.rag_final_top_k,
+        }
+    return {
+        "candidate_k": s.rag_rerank_candidate_k * 2,
+        "prefetch_limit": s.rag_hybrid_prefetch_limit * 2,
+        "final_top_k": s.rag_final_top_k + 3,
+    }
+
+
 def _build_reranker() -> RerankClient:
     s = get_settings()
     return RerankClient(
@@ -83,12 +99,14 @@ def _select_final_hits(
     *,
     min_score: float,
     query_tags: Any | None = None,
+    final_top_k: int | None = None,
 ) -> list[dict[str, Any]]:
     """Apply rerank threshold, top-K, and per-file diversity limits."""
     s = get_settings()
     final_hits: list[dict[str, Any]] = []
     per_file_counts: dict[int, int] = {}
     per_file_limit = max(1, s.rag_per_file_context_limit)
+    limit = max(1, final_top_k if final_top_k is not None else s.rag_final_top_k)
 
     for orig_idx, rerank_score in ranked:
         hit = dict(hits[orig_idx])
@@ -104,7 +122,7 @@ def _select_final_hits(
         hit["score"] = adjusted_score
         hit["rerank_score"] = rerank_score
         final_hits.append(hit)
-        if len(final_hits) >= s.rag_final_top_k:
+        if len(final_hits) >= limit:
             break
     return final_hits
 
@@ -142,6 +160,7 @@ async def retrieve_context(
     kb_ids: list[int] | None,
     query: str,
     query_tags: Any | None = None,
+    deep_mode: bool = False,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Hybrid dense+sparse search → cross-encoder rerank → top-K context.
 
@@ -150,6 +169,7 @@ async def retrieve_context(
     the prompt).
     """
     s = get_settings()
+    profile = _retrieval_profile(deep_mode=deep_mode)
     # Dense + sparse in parallel — they hit two different services
     # (vLLM embedding container vs in-process BM25).
     dense_vec, sparse_vec = await asyncio.gather(
@@ -161,8 +181,8 @@ async def retrieve_context(
         sparse_vector=sparse_vec,
         user_id=user_id,
         kb_ids=kb_ids,
-        top_k=s.rag_rerank_candidate_k,
-        prefetch_limit=s.rag_hybrid_prefetch_limit,
+        top_k=profile["candidate_k"],
+        prefetch_limit=profile["prefetch_limit"],
     )
     if not dense_hits:
         return "", []
@@ -181,6 +201,7 @@ async def retrieve_context(
         ranked,
         min_score=s.rag_rerank_min_score,
         query_tags=query_tags,
+        final_top_k=profile["final_top_k"],
     )
 
     if not final_hits:

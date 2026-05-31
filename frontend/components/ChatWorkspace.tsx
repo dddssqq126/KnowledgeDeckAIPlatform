@@ -93,7 +93,12 @@ export function ChatWorkspace({
     : pageTitle;
 
   const handleSend = useCallback(
-    async (text: string, useRag: boolean, kbIds: number[] | null) => {
+    async (
+      text: string,
+      useRag: boolean,
+      kbIds: number[] | null,
+      _deepMode: boolean,
+    ) => {
       let sid = activeId;
       if (sid == null) {
         const s = await newChat();

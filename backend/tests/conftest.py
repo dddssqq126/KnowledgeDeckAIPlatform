@@ -1,4 +1,6 @@
 from collections.abc import AsyncIterator
+import asyncio
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,9 @@ from sqlalchemy.pool import NullPool
 from testcontainers.postgres import PostgresContainer
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 @pytest.fixture(scope="session")

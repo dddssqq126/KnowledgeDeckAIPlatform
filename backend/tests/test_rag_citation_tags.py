@@ -100,6 +100,29 @@ def test_select_final_hits_applies_tag_match_boost(monkeypatch) -> None:
     assert selected[0]["score"] == pytest.approx(0.23)
 
 
+def test_select_final_hits_accepts_deep_mode_limit(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    monkeypatch.setattr(
+        rag,
+        "get_settings",
+        lambda: Settings(rag_final_top_k=2, rag_per_file_context_limit=10),
+    )
+    hits = [
+        {"score": 1.0, "payload": {"file_id": i, "filename": f"{i}.txt"}}
+        for i in range(5)
+    ]
+
+    selected = rag._select_final_hits(
+        hits,
+        [(i, 0.9) for i in range(5)],
+        min_score=0.0,
+        final_top_k=4,
+    )
+
+    assert [hit["payload"]["file_id"] for hit in selected] == [0, 1, 2, 3]
+
+
 @pytest.mark.asyncio
 async def test_citations_include_tag_fields(monkeypatch) -> None:
     hit = {
@@ -157,6 +180,61 @@ async def test_citations_include_tag_fields(monkeypatch) -> None:
             "knowledge_type": "vendor_doc",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_context_uses_deep_mode_search_profile(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    hit = {
+        "score": 0.9,
+        "payload": {
+            "file_id": 7,
+            "filename": "deep.txt",
+            "text": "body",
+            "doc_type": "guide",
+            "tags_topic": [],
+        },
+    }
+
+    async def fake_embed_query(_q):
+        return [0.0] * 4
+
+    async def fake_sparse_query(_q):
+        return SparseVec(indices=[1], values=[1.0])
+
+    async def fake_hybrid(**kwargs):
+        assert kwargs["top_k"] == 80
+        assert kwargs["prefetch_limit"] == 160
+        return [hit]
+
+    class _FakeReranker:
+        async def score(self, _q, passages):
+            return [(0, 0.9)]
+
+    monkeypatch.setattr(
+        rag,
+        "get_settings",
+        lambda: Settings(
+            rag_rerank_candidate_k=40,
+            rag_hybrid_prefetch_limit=80,
+            rag_final_top_k=7,
+        ),
+    )
+    monkeypatch.setattr(rag.ingestion, "embed_query", fake_embed_query)
+    monkeypatch.setattr(rag.sparse_embed, "embed_query", fake_sparse_query)
+    monkeypatch.setattr(rag.qdrant_store, "hybrid_search", fake_hybrid)
+    monkeypatch.setattr(rag, "_build_reranker", lambda: _FakeReranker())
+
+    context, citations = await rag.retrieve_context(
+        user_id=1,
+        kb_ids=None,
+        query="deep search",
+        deep_mode=True,
+    )
+
+    assert "deep.txt" in context
+    assert citations[0]["file_id"] == 7
 
 
 def test_context_includes_source_metadata() -> None:
