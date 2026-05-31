@@ -560,6 +560,7 @@ async def stream_answer(
     rag_query: str | None = None,
     code_assist_intent: str | None = None,
     query_tags: QueryTags | None = None,
+    retrieval_note: str | None = None,
 ) -> AsyncIterator[str]:
     """Yields LLM token chunks as plain strings."""
     messages: list[Any] = [SystemMessage(content=SYSTEM_PROMPT)]
@@ -574,6 +575,8 @@ async def stream_answer(
         )
     if query_tags and query_tags.has_signal():
         messages.append(SystemMessage(content=query_tags.as_prompt_text()))
+    if retrieval_note:
+        messages.append(SystemMessage(content=retrieval_note))
     if code_assist_intent:
         messages.append(
             SystemMessage(

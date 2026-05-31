@@ -124,6 +124,173 @@ def test_select_final_hits_accepts_deep_mode_limit(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_checked_deep_mode_answered_does_not_retry(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def fake_retrieve_pass(**kwargs):
+        calls.append(kwargs["query"])
+        return rag._RetrievalPass(
+            query=kwargs["query"],
+            candidates=[],
+            final_hits=[],
+            context="[1] source_id=1 filename=a.txt\nanswer",
+            citations=[{"file_id": 1, "filename": "a.txt"}],
+        )
+
+    async def fake_judge_coverage(**_kwargs):
+        return rag.CoverageJudgment(status="answered", reason="enough", retry=False)
+
+    monkeypatch.setattr(rag, "_retrieve_pass", fake_retrieve_pass)
+    monkeypatch.setattr(rag, "_judge_coverage", fake_judge_coverage)
+
+    result = await rag.retrieve_context_checked(
+        user_id=1,
+        kb_ids=None,
+        query="original query",
+        user_message="question?",
+        deep_mode=True,
+    )
+
+    assert calls == ["original query"]
+    assert result.context.endswith("answer")
+    assert result.diagnostics.coverage_status == "answered"
+    assert result.diagnostics.retried is False
+    assert result.diagnostics.retrieval_note() is None
+
+
+@pytest.mark.asyncio
+async def test_checked_deep_mode_retries_and_merges_candidates(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    first_hit = {
+        "score": 0.5,
+        "payload": {
+            "file_id": 1,
+            "filename": "first.txt",
+            "text": "first pass evidence",
+            "chunk_index": 0,
+        },
+    }
+    duplicate_first_hit = {
+        "score": 0.4,
+        "payload": {
+            "file_id": 1,
+            "filename": "first.txt",
+            "text": "duplicate first pass evidence",
+            "chunk_index": 0,
+        },
+    }
+    retry_hit = {
+        "score": 0.7,
+        "payload": {
+            "file_id": 2,
+            "filename": "retry.txt",
+            "text": "retry evidence",
+            "chunk_index": 0,
+        },
+    }
+    search_queries: list[str] = []
+    judge_contexts: list[str] = []
+
+    async def fake_search_candidates(**kwargs):
+        search_queries.append(kwargs["query"])
+        if kwargs["query"] == "alternate angle":
+            return [duplicate_first_hit, retry_hit]
+        return [first_hit]
+
+    async def fake_rank_hits(query, hits):
+        if "alternate angle" in query:
+            assert len(hits) == 2
+            return [(1, 0.95), (0, 0.9)]
+        return [(0, 0.9)]
+
+    async def fake_judge_coverage(**kwargs):
+        judge_contexts.append(kwargs["context"])
+        if len(judge_contexts) == 1:
+            return rag.CoverageJudgment(
+                status="miss",
+                reason="missing retry evidence",
+                alternate_query="alternate angle",
+                retry=True,
+            )
+        return rag.CoverageJudgment(status="answered", reason="now covered")
+
+    monkeypatch.setattr(
+        rag,
+        "get_settings",
+        lambda: Settings(rag_rerank_min_score=0.0, rag_per_file_context_limit=3),
+    )
+    monkeypatch.setattr(rag, "_search_candidates", fake_search_candidates)
+    monkeypatch.setattr(rag, "_rank_hits", fake_rank_hits)
+    monkeypatch.setattr(rag, "_judge_coverage", fake_judge_coverage)
+
+    result = await rag.retrieve_context_checked(
+        user_id=1,
+        kb_ids=None,
+        query="original query",
+        user_message="question?",
+        deep_mode=True,
+    )
+
+    assert search_queries == ["original query", "alternate angle"]
+    assert result.context.count("first.txt") == 1
+    assert "retry evidence" in result.context
+    assert result.citations == [
+        {
+            "file_id": 2,
+            "filename": "retry.txt",
+            "doc_type": None,
+            "tags_topic": [],
+            "vendor": "unknown",
+            "platform": "unknown",
+            "knowledge_type": "unknown",
+        },
+        {
+            "file_id": 1,
+            "filename": "first.txt",
+            "doc_type": None,
+            "tags_topic": [],
+            "vendor": "unknown",
+            "platform": "unknown",
+            "knowledge_type": "unknown",
+        },
+    ]
+    assert result.diagnostics.retried is True
+    assert result.diagnostics.retry_query == "alternate angle"
+    assert result.diagnostics.coverage_status == "answered"
+
+
+@pytest.mark.asyncio
+async def test_checked_deep_mode_judge_failure_keeps_first_pass(monkeypatch) -> None:
+    async def fake_retrieve_pass(**kwargs):
+        return rag._RetrievalPass(
+            query=kwargs["query"],
+            candidates=[],
+            final_hits=[],
+            context="first pass context",
+            citations=[{"file_id": 1, "filename": "first.txt"}],
+        )
+
+    async def fake_judge_coverage(**_kwargs):
+        return None
+
+    monkeypatch.setattr(rag, "_retrieve_pass", fake_retrieve_pass)
+    monkeypatch.setattr(rag, "_judge_coverage", fake_judge_coverage)
+
+    result = await rag.retrieve_context_checked(
+        user_id=1,
+        kb_ids=None,
+        query="original query",
+        user_message="question?",
+        deep_mode=True,
+    )
+
+    assert result.context == "first pass context"
+    assert result.citations == [{"file_id": 1, "filename": "first.txt"}]
+    assert result.diagnostics.coverage_status == "not_checked"
+
+
+@pytest.mark.asyncio
 async def test_citations_include_tag_fields(monkeypatch) -> None:
     hit = {
         "score": 0.9,

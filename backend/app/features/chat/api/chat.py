@@ -420,6 +420,7 @@ async def stream_chat(
         try:
             citations: list[dict[str, Any]] = []
             context = ""
+            retrieval_note: str | None = None
             rag_query: str | None = None
             code_assist_intent: str | None = None
             query_tags: chat_service.QueryTags | None = None
@@ -447,13 +448,26 @@ async def stream_chat(
                         history=history, user_message=user_message
                     )
                 query_tags = chat_service.detect_query_tags(user_message, rag_query)
-                context, citations = await rag.retrieve_context(
-                    user_id=user_id,
-                    kb_ids=kb_ids,
-                    query=rag_query,
-                    query_tags=query_tags,
-                    deep_mode=deep_mode,
-                )
+                if deep_mode:
+                    rag_result = await rag.retrieve_context_checked(
+                        user_id=user_id,
+                        kb_ids=kb_ids,
+                        query=rag_query,
+                        user_message=user_message,
+                        query_tags=query_tags,
+                        deep_mode=True,
+                    )
+                    context = rag_result.context
+                    citations = rag_result.citations
+                    retrieval_note = rag_result.diagnostics.retrieval_note()
+                else:
+                    context, citations = await rag.retrieve_context(
+                        user_id=user_id,
+                        kb_ids=kb_ids,
+                        query=rag_query,
+                        query_tags=query_tags,
+                        deep_mode=False,
+                    )
 
             collected: list[str] = []
             async for token in chat_service.stream_answer(
@@ -463,6 +477,7 @@ async def stream_chat(
                 rag_query=rag_query,
                 code_assist_intent=code_assist_intent,
                 query_tags=query_tags,
+                retrieval_note=retrieval_note,
             ):
                 collected.append(token)
                 yield _sse("token", {"text": token})
