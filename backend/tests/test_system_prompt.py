@@ -29,3 +29,6 @@ def test_prompt_has_answer_discipline_rules() -> None:
     assert "associated code" in p
     assert "only the description" in p
     assert "程式碼" in SYSTEM_PROMPT
+    assert "vbt" in p
+    assert "answer the" in p
+    assert "print the relevant code" in p
