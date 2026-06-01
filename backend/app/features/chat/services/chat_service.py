@@ -148,9 +148,11 @@ Context when it is available, preserve its original language and formatting as
 much as possible, and cite the same source. If a retrieved document section
 mentions VBT and has code below it, check whether that code can answer the
 user's question; when it can, answer using that code and print the relevant code
-block from Context. If the associated code is not retrieved in Context,
-explicitly state that the referenced code is not present in the retrieved
-Context instead of inventing it.
+block from Context. If the retrieved Context contains VBT or C# code that is
+relevant to the question, prefer an answer that includes that code-backed
+information and the relevant code block. If the associated code is not retrieved
+in Context, explicitly state that the referenced code is not present in the
+retrieved Context instead of inventing it.
 
 For code questions:
 Inspect retrieved code context first. Keep the original programming language

@@ -32,3 +32,5 @@ def test_prompt_has_answer_discipline_rules() -> None:
     assert "vbt" in p
     assert "answer the" in p
     assert "print the relevant code" in p
+    assert "c# code" in p
+    assert "code-backed" in p
