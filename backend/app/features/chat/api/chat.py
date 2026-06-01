@@ -395,7 +395,7 @@ def _parse_bool_field(value: Any, *, default: bool = False) -> bool:
 
 
 def _parse_kb_ids_field(value: Any) -> list[int] | None:
-    if value in (None, "", "null"):
+    if value in (None, "", "null", "undefined"):
         return None
     if isinstance(value, list):
         return [int(v) for v in value]
@@ -407,27 +407,58 @@ def _parse_kb_ids_field(value: Any) -> list[int] | None:
     return [int(v) for v in parsed]
 
 
+def _parse_form_payload(value: Any) -> dict[str, Any]:
+    if value in (None, ""):
+        return {}
+    parsed = json.loads(str(value))
+    if not isinstance(parsed, dict):
+        raise ValueError("payload must be an object")
+    return parsed
+
+
+def _form_or_payload(form: Any, payload: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        value = form.get(name)
+        if value not in (None, ""):
+            return value
+    for name in names:
+        if name in payload:
+            return payload[name]
+    return None
+
+
 async def _parse_stream_request(request: Request) -> tuple[StreamRequest, list[Any]]:
-    content_type = request.headers.get("content-type", "")
-    if content_type.startswith("multipart/form-data"):
+    content_type = request.headers.get("content-type", "").lower()
+    if "multipart/form-data" in content_type:
         form = await request.form()
         try:
+            payload = _parse_form_payload(form.get("payload"))
             body = StreamRequest.model_validate(
                 {
-                    "session_id": int(str(form.get("session_id"))),
-                    "message": str(form.get("message") or ""),
-                    "use_rag": _parse_bool_field(form.get("use_rag")),
-                    "kb_ids": _parse_kb_ids_field(form.get("kb_ids")),
-                    "deep_mode": _parse_bool_field(form.get("deep_mode")),
+                    "session_id": _form_or_payload(
+                        form, payload, "session_id", "sessionId"
+                    ),
+                    "message": _form_or_payload(form, payload, "message"),
+                    "use_rag": _parse_bool_field(
+                        _form_or_payload(form, payload, "use_rag", "useRag")
+                    ),
+                    "kb_ids": _parse_kb_ids_field(
+                        _form_or_payload(form, payload, "kb_ids", "kbIds")
+                    ),
+                    "deep_mode": _parse_bool_field(
+                        _form_or_payload(form, payload, "deep_mode", "deepMode")
+                    ),
                 }
             )
         except Exception as exc:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_stream_request"
             ) from exc
-        uploads = [
-            item for _key, item in form.multi_items() if hasattr(item, "filename")
-        ]
+        uploads = []
+        for field_name in ("files", "attachments", "file"):
+            uploads.extend(
+                item for item in form.getlist(field_name) if hasattr(item, "filename")
+            )
         return body, uploads[:MAX_CHAT_ATTACHMENTS]
 
     try:

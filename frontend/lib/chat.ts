@@ -119,6 +119,16 @@ export function buildStreamFormData(req: StreamRequest): FormData {
   form.append("message", req.message);
   form.append("use_rag", String(req.use_rag));
   form.append("kb_ids", JSON.stringify(req.kb_ids));
+  form.append(
+    "payload",
+    JSON.stringify({
+      session_id: req.session_id,
+      message: req.message,
+      use_rag: req.use_rag,
+      kb_ids: req.kb_ids,
+      deep_mode: req.deep_mode ?? false,
+    }),
+  );
   form.append("deep_mode", String(req.deep_mode ?? false));
   for (const file of req.attachments ?? []) {
     form.append("files", file, file.name);
