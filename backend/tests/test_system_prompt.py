@@ -14,3 +14,8 @@ def test_prompt_has_answer_discipline_rules() -> None:
     assert "文件不足" in SYSTEM_PROMPT
     assert "clarifying question" in p
     assert "citation" in p
+    assert "programming language" in p
+    assert "do not generate new code" in p
+    assert "explicitly asks" in p
+    assert "functions" in p
+    assert "signatures" in p
