@@ -1,5 +1,7 @@
 import pytest
 
+from app.db.models import ChatMessage, ChatRole
+from app.features.chat.services import chat_service
 from app.features.chat.services.chat_service import (
     detect_query_tags,
     detect_symbol_lookup,
@@ -53,8 +55,52 @@ async def test_rewrite_for_retrieval_builds_symbol_query() -> None:
             "J750 troubleshooting",
             ("unknown", "j750", "unknown"),
         ),
+        (
+            "3GPP 5G NR specification",
+            ("3gpp", "5g_nr", "standard"),
+        ),
+        (
+            "IEEE 802.11ax standard",
+            ("ieee", "802.11", "standard"),
+        ),
     ],
 )
 def test_detect_query_tags(message: str, expected: tuple[str, str, str]) -> None:
     tags = detect_query_tags(message)
     assert (tags.vendor, tags.platform, tags.knowledge_type) == expected
+
+
+def _message(role: ChatRole, content: str) -> ChatMessage:
+    return ChatMessage(session_id=1, role=role, content=content, citations=None)
+
+
+def test_history_to_messages_uses_configured_recent_window(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    history = [
+        _message(ChatRole.USER, "old user"),
+        _message(ChatRole.ASSISTANT, "old assistant"),
+        _message(ChatRole.USER, "recent user"),
+        _message(ChatRole.ASSISTANT, "recent assistant"),
+    ]
+    monkeypatch.setattr(
+        chat_service,
+        "get_settings",
+        lambda: Settings(chat_answer_history_messages=2),
+    )
+
+    messages = chat_service._history_to_messages(history)
+
+    assert [m.content for m in messages] == ["recent user", "recent assistant"]
+
+
+def test_history_to_messages_can_disable_history(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    monkeypatch.setattr(
+        chat_service,
+        "get_settings",
+        lambda: Settings(chat_answer_history_messages=0),
+    )
+
+    assert chat_service._history_to_messages([_message(ChatRole.USER, "old")]) == []

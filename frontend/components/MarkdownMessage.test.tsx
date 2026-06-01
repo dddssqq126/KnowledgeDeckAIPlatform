@@ -31,6 +31,19 @@ describe("MarkdownMessage", () => {
     });
   });
 
+
+  it("renders table cell markdown emphasis and line breaks", () => {
+    const { container } = render(
+      <MarkdownMessage
+        content={"| Item | Detail |\n| --- | --- |\n| A | **Important**<br>Next line |"}
+      />,
+    );
+
+    expect(screen.getByText("Important").tagName).toBe("STRONG");
+    expect(screen.getByText("Next line")).toBeInTheDocument();
+    expect(container.querySelector("td br")).not.toBeNull();
+  });
+
   it("downloads markdown tables as Excel-compatible xls files", async () => {
     render(
       <MarkdownMessage content={"| Name | Value |\n| --- | --- |\n| A&B | <1> |"} />,

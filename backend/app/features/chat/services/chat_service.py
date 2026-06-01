@@ -24,6 +24,7 @@ from langchain_openai import ChatOpenAI
 
 from app.core.config import get_settings
 from app.db.models import ChatMessage, ChatRole
+from app.features.rag.services import tagger
 
 logger = logging.getLogger(__name__)
 
@@ -79,45 +80,6 @@ _SYMBOL_LOOKUP_HINT_RE = re.compile(
 )
 
 
-SYSTEM_PROMPT = (
-    "You are KnowledgeDeck, a helpful conversational assistant.\n\n"
-    "This is a multi-turn conversation. The messages above (if any) are the "
-    "prior turns — treat them as the running context. Refer back to facts, "
-    "preferences, and details the user has shared earlier in the conversation, "
-    "and maintain continuity across turns.\n\n"
-    "When a `Context:` section is included by the system, prefer it as the "
-    "source for factual claims about the user's documents. When `Context:` is "
-    "absent or irrelevant to the question, answer from your general knowledge.\n\n"
-    "Code assistance behavior:\n"
-    "- If the user asks for unit tests, debugging, implementation help, or "
-    "provides code, inspect the provided `Context:` first.\n"
-    "- Prefer existing functions, classes, modules, and APIs from the "
-    "retrieved context.\n"
-    "- Do not invent project/library APIs when relevant context exists.\n"
-    "- When recommending a function, mention the exact function/class/module "
-    "name and why it matches.\n"
-    "- For unit tests, infer behavior from retrieved signatures, "
-    "implementations, usages, and existing tests.\n"
-    "- For debugging, connect the error message, variable, function, or stack "
-    "trace to retrieved implementation details.\n"
-    "- If no relevant code context is found, clearly say that no matching "
-    "project/library code was found, then provide best-effort general "
-    "guidance.\n\n"
-    "For general document Q&A, keep the original concise document-answering "
-    "behavior; do not make every response code-only. Do not change citation "
-    "formatting requirements.\n\n"
-    "Document answer discipline:\n"
-    "- For questions about the user's documents, answer ONLY from the provided "
-    "`Context:`. Do not fabricate facts that are not present in it.\n"
-    "- If `Context:` is present but insufficient to answer, say so plainly "
-    "(e.g. 'the documents don't cover this' / '資料不足以回答') instead of guessing.\n"
-    "- If the question is ambiguous, ask ONE clarifying question before "
-    "answering.\n\n"
-    "Be concise. Do not refuse to recall information the user has shared "
-    "earlier in this conversation — the conversation history above is yours "
-    "to use."
-)
-
 SYSTEM_PROMPT = """
 You are KnowledgeDeck, an internal engineering knowledge assistant for
 semiconductor test knowledge, company BKM, vendor documents, and source code.
@@ -128,17 +90,20 @@ practically. The user may ask about Teradyne, Advantest, specific tester
 platforms, internal BKM, troubleshooting procedures, or project code.
 
 Conversation:
-Use prior conversation turns for continuity. Resolve follow-up questions
-against the conversation history when possible.
+Focus on the user's latest message. Use prior turns only to resolve explicit
+follow-up references, pronouns, or user preferences. Do not copy, summarize, or
+continue the previous assistant answer unless the latest user message clearly
+asks you to do so.
 
 Grounding policy:
 When a `Context:` section is provided, treat it as the primary evidence for
 questions about the user's documents, company BKM, vendor platforms, or
 codebase. Do not invent internal facts, procedures, APIs, platform behavior,
 limits, or BKM that are not supported by the Context. If Context is absent or
-irrelevant, you may answer from general knowledge, but clearly say that the
-answer is not grounded in the uploaded knowledge base. If Context is partially
-sufficient, answer the supported part first, then clearly list what is missing.
+irrelevant, answer from general engineering knowledge without adding a separate
+boilerplate disclaimer. If Context is partial, answer the supported parts
+directly and avoid a standalone "missing information" section unless the user
+explicitly asks for gaps.
 
 Vendor/platform discipline:
 Pay close attention to source metadata such as vendor, platform,
@@ -160,9 +125,10 @@ Prefer sources in this order:
 
 Answer style:
 Answer in Traditional Chinese by default unless the user asks for another
-language. Use a complete engineering explanation, not an overly short reply.
-Make the answer easy to understand for an engineer who may not know the
-document set.
+language. Provide detailed, practical engineering explanations with enough
+context, reasoning, examples, and next actions for the user to apply the answer.
+Do not be overly terse. Make the answer easy to understand for an engineer who
+may not know the document set.
 
 For document/BKM questions, use this structure when useful:
 - 結論
@@ -170,15 +136,47 @@ For document/BKM questions, use this structure when useful:
 - 依據：briefly mention the relevant source files or source numbers
 - 詳細說明：explain the mechanism, rule, or procedure
 - 操作步驟：if the question asks how to do something
+- 程式碼：if the retrieved document section includes associated code, include
+  the relevant code block from Context in its original language
 - 注意事項 / 風險
-- 文件不足或不確定處
 - 建議下一步
 
+For document/BKM sections that combine a plot, shmoo, table, field description,
+procedure, or method with associated code below it (for example VBA), do not
+answer with only the description. Include the relevant associated code from
+Context when it is available, preserve its original language and formatting as
+much as possible, and cite the same source. If a retrieved document section
+mentions VBT and has code below it, check whether that code can answer the
+user's question; when it can, answer using that code and print the relevant code
+block from Context. If the retrieved Context contains VBT or C# code that is
+relevant to the question, prefer an answer that includes that code-backed
+information and the relevant code block. If the associated code is not retrieved
+in Context, explicitly state that the referenced code is not present in the
+retrieved Context instead of inventing it.
+
 For code questions:
-Inspect retrieved code context first. Prefer existing functions, classes,
-modules, signatures, call sites, and tests from the Context. Do not invent
-project APIs. If code context is insufficient, say what code artifact is
-missing and provide best-effort general guidance separately.
+Inspect retrieved code context first. Keep the original programming language
+used by the retrieved code. Do not translate, rewrite, or convert code into
+another programming language unless the user explicitly asks for that
+conversion. When relevant functions, classes, or modules are found in Context,
+identify them first by name, file/module path if available, signatures if
+available, and explain their existing behavior or usage. Do not generate new code,
+replacement implementations, pseudocode, or invented APIs unless the user
+explicitly asks to create, implement, rewrite, refactor, or provide an example.
+This restriction does not prevent quoting or explaining code that is present in
+Context. If retrieved procedures, steps, or methods include code blocks and the
+user asks how to use or perform them, present the relevant Context code in its
+original language, either step-by-step with explanation or as the complete
+referenced code block when needed. Clearly distinguish Context code from any
+optional new example, and do not fabricate missing steps, code, or APIs. If the
+user asks where a behavior is implemented, answer by pointing to
+the existing function, class, or call site rather than inventing a fresh
+implementation. Prefer existing functions, classes, modules, signatures, call
+sites, and tests from the Context. Do not invent project APIs. If no relevant
+function is found, clearly state that the retrieved Context does not contain the
+needed function. If code context is insufficient, say what code artifact is
+missing and provide best-effort general guidance separately from
+project-specific facts.
 
 Conflict handling:
 If sources disagree, do not hide the conflict. State the conflicting sources,
@@ -191,12 +189,12 @@ When using Context, cite source numbers or filenames naturally in the answer.
 Do not cite sources that were not used. When making an inference, label it as
 an inference.
 
-Insufficient evidence:
-If the documents do not contain enough information, say so directly. Use
-wording like:
-「目前文件中可以確認的是...」
-「目前文件沒有明確說明...」
-「以下是一般工程推論，尚需用內部 BKM 或 vendor doc 確認...」
+Evidence boundaries:
+Do not overstate uncertain conclusions or fabricate details. When evidence is
+limited, keep the answer scoped to what can be supported, phrase inferences as
+engineering judgment, and continue with practical guidance. Avoid adding a
+repetitive standalone section named "文件不足", "不確定處", or similar unless the
+user explicitly asks you to list gaps.
 
 Do not:
 - Pretend unsupported information came from the documents.
@@ -205,11 +203,6 @@ Do not:
   answer.
 - Over-focus on citations at the expense of a clear explanation.
 """.strip()
-# 20 = up to ~10 user/assistant pairs. Conversational chat tends to have
-# short turns, so this is plenty before older turns fall off the window.
-HISTORY_MAX_MESSAGES = 20
-
-
 CODE_INTENT_UNIT_TEST = "unit_test"
 CODE_INTENT_DEBUG = "debug"
 CODE_INTENT_IMPLEMENTATION = "implementation"
@@ -292,14 +285,20 @@ class QueryTags:
 
 
 def detect_query_tags(*texts: str | None) -> QueryTags:
-    """Detect vendor/platform/category hints from user and rewritten queries."""
+    """Detect soft metadata hints from user and rewritten retrieval queries."""
     haystack = " ".join(t for t in texts if t).casefold()
 
     vendor = "unknown"
-    if any(term in haystack for term in ("teradyne", "泰瑞達", "泰瑞达")):
-        vendor = "teradyne"
-    elif any(term in haystack for term in ("advantest", "艾德萬", "爱德万")):
-        vendor = "advantest"
+    for canonical, aliases in (
+        ("teradyne", ("teradyne", "泰瑞達", "泰瑞达")),
+        ("advantest", ("advantest", "艾德萬", "爱德万")),
+        ("3gpp", ("3gpp", "third generation partnership project")),
+        ("ieee", ("ieee", "institute of electrical and electronics engineers")),
+        ("pcisig", ("pci-sig", "pci sig", "pcisig")),
+    ):
+        if any(alias in haystack for alias in aliases):
+            vendor = canonical
+            break
 
     platform = "unknown"
     for canonical, aliases in (
@@ -307,6 +306,10 @@ def detect_query_tags(*texts: str | None) -> QueryTags:
         ("j750", ("j750", "j 750")),
         ("v93000", ("v93000", "v93k", "sm93000", "sm 93000")),
         ("t2000", ("t2000", "t 2000")),
+        ("5g_nr", ("5g nr", "5gnr", "new radio")),
+        ("5g", ("5g",)),
+        ("802.11", ("802.11", "wi-fi", "wifi")),
+        ("pcie", ("pcie", "pci express")),
     ):
         if any(alias in haystack for alias in aliases):
             platform = canonical
@@ -320,11 +323,18 @@ def detect_query_tags(*texts: str | None) -> QueryTags:
         for term in ("code", "source code", "function", "class", "api", "程式", "代碼")
     ):
         knowledge_type = "code"
+    elif any(term in haystack for term in ("standard", "specification", "spec", "rfc")):
+        knowledge_type = "standard"
+    elif any(
+        term in haystack
+        for term in ("vendor doc", "vendor document", "manual", "datasheet")
+    ):
+        knowledge_type = "vendor_doc"
 
     return QueryTags(
-        vendor=vendor,
-        platform=platform,
-        knowledge_type=knowledge_type,
+        vendor=tagger.normalize_vendor(vendor),
+        platform=tagger.normalize_platform(platform),
+        knowledge_type=tagger.normalize_knowledge_type(knowledge_type),
     )
 
 
@@ -392,11 +402,14 @@ _REWRITE_SYSTEM = (
     "You may receive:\n"
     "- A first-turn question (no conversation history above).\n"
     "- A follow-up question that uses pronouns ('that', 'it', 'this "
-    "one'), elliptical references ('and Python?'), or implicit context "
-    "that only makes sense relative to the prior turns.\n\n"
+    "one') or elliptical references ('and Python?') that only make sense "
+    "relative to recent user turns.\n\n"
     "Apply these rules in order:\n"
-    "1. Resolve all pronouns / references / ellipsis against the history.\n"
-    "2. Replace technical abbreviations with their full canonical form. "
+    "1. Use history only when the latest question explicitly depends on it; "
+    "otherwise ignore history and keep the query focused on the latest question.\n"
+    "2. Resolve pronouns / references / ellipsis against recent history only "
+    "when needed.\n"
+    "3. Replace technical abbreviations with their full canonical form. "
     "Drop the abbreviation entirely — do NOT keep it in parentheses, "
     "because parenthetical noise lowers cross-encoder rerank scores. "
     "Examples:\n"
@@ -405,12 +418,12 @@ _REWRITE_SYSTEM = (
     "   gpu -> graphics processing unit\n"
     "   ml  -> machine learning\n"
     "   db  -> database\n"
-    "3. If the question is a single bare term (one word or one acronym), "
+    "4. If the question is a single bare term (one word or one acronym), "
     "reformulate it into a natural question. Examples:\n"
     "   'Kubernetes'  -> 'What is Kubernetes?'\n"
     "   'embeddings'  -> 'What are embeddings?'\n"
     "   'k8s'         -> 'What is Kubernetes?'\n"
-    "4. If the question is already a complete natural-language question "
+    "5. If the question is already a complete natural-language question "
     "with no abbreviations and no references to resolve, output it "
     "unchanged.\n\n"
     "Output: ONE LINE. The rewritten query only. No quotation marks. No "
@@ -480,9 +493,7 @@ def _symbol_lookup_query(symbol: str) -> str:
     return _SYMBOL_QUERY_TEMPLATE.format(symbol=symbol)
 
 
-async def rewrite_for_retrieval(
-    history: list[ChatMessage], user_message: str
-) -> str:
+async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -> str:
     """Rewrite the user's question into a standalone, abbreviation-expanded
     query for the retrieval pipeline.
 
@@ -499,14 +510,19 @@ async def rewrite_for_retrieval(
         return _symbol_lookup_query(symbol)
 
     if history:
-        # Multi-turn: feed the rewriter the recent history so it can
-        # resolve pronouns/ellipsis. Long assistant turns are clipped
-        # because only the gist matters for reference resolution.
-        recent = history[-6:]
+        # Multi-turn: feed only a very small recent window so the rewriter can
+        # resolve short follow-ups without dragging in old answer content.
+        s = get_settings()
+        recent = history[-max(0, s.chat_rewrite_history_messages) :]
+        max_chars = max(40, s.chat_rewrite_history_chars)
         transcript_lines: list[str] = []
         for m in recent:
             role = "User" if m.role is ChatRole.USER else "Assistant"
-            body = m.content if len(m.content) <= 400 else m.content[:400] + "..."
+            body = (
+                m.content
+                if len(m.content) <= max_chars
+                else m.content[:max_chars] + "..."
+            )
             transcript_lines.append(f"{role}: {body}")
         prompt = (
             "Conversation history:\n"
@@ -553,9 +569,15 @@ def _build_llm() -> ChatOpenAI:
     )
 
 
+def _history_window(rows: list[ChatMessage], max_messages: int) -> list[ChatMessage]:
+    return rows[-max(0, max_messages) :] if max_messages else []
+
+
 def _history_to_messages(rows: list[ChatMessage]) -> list[HumanMessage | AIMessage]:
+    s = get_settings()
+    max_messages = max(0, s.chat_answer_history_messages)
     msgs: list[HumanMessage | AIMessage] = []
-    for r in rows[-HISTORY_MAX_MESSAGES:]:
+    for r in _history_window(rows, max_messages):
         if r.role is ChatRole.USER:
             msgs.append(HumanMessage(content=r.content))
         else:
@@ -571,6 +593,7 @@ async def stream_answer(
     rag_query: str | None = None,
     code_assist_intent: str | None = None,
     query_tags: QueryTags | None = None,
+    retrieval_note: str | None = None,
 ) -> AsyncIterator[str]:
     """Yields LLM token chunks as plain strings."""
     messages: list[Any] = [SystemMessage(content=SYSTEM_PROMPT)]
@@ -579,10 +602,14 @@ async def stream_answer(
         messages.append(SystemMessage(content=f"Context:\n{context}"))
     if rag_query:
         messages.append(
-            SystemMessage(content=f"Retrieval query used to select context: {rag_query}")
+            SystemMessage(
+                content=f"Retrieval query used to select context: {rag_query}"
+            )
         )
     if query_tags and query_tags.has_signal():
         messages.append(SystemMessage(content=query_tags.as_prompt_text()))
+    if retrieval_note:
+        messages.append(SystemMessage(content=retrieval_note))
     if code_assist_intent:
         messages.append(
             SystemMessage(

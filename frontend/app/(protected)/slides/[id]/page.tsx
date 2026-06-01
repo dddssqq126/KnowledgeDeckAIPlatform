@@ -172,7 +172,13 @@ export default function SlideSessionPage() {
   }, [sessionId, patchSession]);
 
   const handleSend = useCallback(
-    async (text: string, useRag: boolean, kbIds: number[] | null) => {
+    async (
+      text: string,
+      useRag: boolean,
+      kbIds: number[] | null,
+      _deepMode: boolean,
+      _attachments: File[] = [],
+    ) => {
       const optimistic: SlideMessage = {
         id: -Date.now(),
         role: "user",

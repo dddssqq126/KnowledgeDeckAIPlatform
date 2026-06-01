@@ -4,15 +4,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     app_name: str = "KnowledgeDeck"
     environment: str = "local"
     api_prefix: str = "/api"
 
-    database_url: str = (
-        "sqlite+aiosqlite:///./knowledgedeck.db"
-    )
+    database_url: str = "sqlite+aiosqlite:///./knowledgedeck.db"
 
     initial_user_username: str = ""
     initial_user_password: str = ""
@@ -40,17 +40,32 @@ class Settings(BaseSettings):
     # internal model id (sent to vLLM) and the user-facing label can change
     # independently.
     llm_model_label: str = "Gemma 4 E4B"
+    # Keep answer generation focused on the latest turn. Older turns still
+    # exist in DB, but only this many recent messages are sent to the LLM.
+    chat_answer_history_messages: int = 6
+    # Query rewrite only needs enough history to resolve short follow-ups.
+    chat_rewrite_history_messages: int = 4
+    chat_rewrite_history_chars: int = 180
 
     embedding_base_url: str = "http://knowledgedeck_vllm_embedding:8001/v1"
     embedding_api_key: str = "local-dev-key"
     embedding_model: str = "BAAI/bge-m3"
     embedding_dim: int = 1024  # BAAI/bge-m3 outputs 1024-dim vectors
+    # Batch large document embedding requests so one huge file does not create
+    # a single long-running HTTP call that is likely to time out.
+    embedding_batch_size: int = 32
+    # Also cap the total characters per embedding request. If a provider still
+    # rejects/times out on a batch, ingestion automatically bisects that batch.
+    embedding_batch_max_chars: int = 24_000
 
     # Local disk mode (no Qdrant server process): set qdrant_path and leave
     # qdrant_url empty. If qdrant_path is empty, url mode is used.
     qdrant_url: str = ""
     qdrant_path: str = "./qdrant_data"
     qdrant_collection: str = "knowledgedeck"
+    # Cap each Qdrant upsert request so large files do not exceed
+    # HTTP/JSON payload limits.
+    qdrant_upsert_batch_size: int = 64
 
     # RAG retrieval knobs.
     # rag_dense_top_k: how many candidates Qdrant returns before rerank.
@@ -60,7 +75,17 @@ class Settings(BaseSettings):
     # rag_rerank_min_score: cross-encoder score threshold; below this the
     #   rerank result is treated as "no relevant context".
     rag_dense_top_k: int = 20
+    # Retrieve a wider candidate set before reranking so the cross-encoder can
+    # recover relevant chunks that were not at the very top of vector fusion.
+    rag_rerank_candidate_k: int = 40
+    rag_hybrid_prefetch_limit: int = 80
     rag_final_top_k: int = 7
+    # Limit repeated chunks from one file so final context covers more likely
+    # documents instead of filling the prompt with near-duplicates.
+    rag_per_file_context_limit: int = 3
+    # Soft boost per matching query metadata tag (vendor/platform/knowledge_type).
+    # This improves ranking without hard-filtering away potentially useful hits.
+    rag_tag_match_boost: float = 0.05
     rag_min_score: float = 0.30
     rag_rerank_min_score: float = 0.10
 

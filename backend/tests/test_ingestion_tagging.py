@@ -33,13 +33,19 @@ async def file_row(db_session):
 
 
 @pytest.mark.asyncio
-async def test_ingest_enriches_embed_text_and_passes_tags(monkeypatch, db_session, file_row):
+async def test_ingest_enriches_embed_text_and_passes_tags(
+    monkeypatch, db_session, file_row
+):
     monkeypatch.setattr(
-        document_parser, "parse",
-        lambda ext, data: [document_parser.ParsedSegment(text="raw body", page_number=1)],
+        document_parser,
+        "parse",
+        lambda ext, data: [
+            document_parser.ParsedSegment(text="raw body", page_number=1)
+        ],
     )
     monkeypatch.setattr(
-        ingestion.tagger, "generate_doc_tags",
+        ingestion.tagger,
+        "generate_doc_tags",
         lambda text, filename: _coro(
             DocTags(
                 topic=["billing"],
@@ -59,6 +65,7 @@ async def test_ingest_enriches_embed_text_and_passes_tags(monkeypatch, db_sessio
 
     async def fake_sparse(texts):
         from app.features.rag.services.sparse_embed import SparseVec
+
         return [SparseVec(indices=[1], values=[1.0]) for _ in texts]
 
     async def fake_ensure():
@@ -90,6 +97,7 @@ async def test_ingest_enriches_embed_text_and_passes_tags(monkeypatch, db_sessio
 def _coro(value):
     async def _c():
         return value
+
     return _c()
 
 
@@ -97,14 +105,21 @@ def _coro(value):
 async def test_ingest_skips_tagging_when_disabled(monkeypatch, db_session, file_row):
     from app.core.config import Settings
 
-    monkeypatch.setattr(ingestion, "get_settings", lambda: Settings(rag_tagging_enabled=False))
     monkeypatch.setattr(
-        document_parser, "parse",
-        lambda ext, data: [document_parser.ParsedSegment(text="raw body", page_number=1)],
+        ingestion, "get_settings", lambda: Settings(rag_tagging_enabled=False)
+    )
+    monkeypatch.setattr(
+        document_parser,
+        "parse",
+        lambda ext, data: [
+            document_parser.ParsedSegment(text="raw body", page_number=1)
+        ],
     )
 
     def _boom(text, filename):
-        raise AssertionError("generate_doc_tags must not be called when tagging disabled")
+        raise AssertionError(
+            "generate_doc_tags must not be called when tagging disabled"
+        )
 
     monkeypatch.setattr(ingestion.tagger, "generate_doc_tags", _boom)
 
@@ -116,6 +131,7 @@ async def test_ingest_skips_tagging_when_disabled(monkeypatch, db_session, file_
 
     async def fake_sparse(texts):
         from app.features.rag.services.sparse_embed import SparseVec
+
         return [SparseVec(indices=[1], values=[1.0]) for _ in texts]
 
     async def fake_ensure():
@@ -135,3 +151,80 @@ async def test_ingest_skips_tagging_when_disabled(monkeypatch, db_session, file_
     assert captured["embed_texts"] == ["raw body"]
     assert captured["upsert"]["tags"] == DocTags.empty()
     assert file_row.status is FileStatus.INDEXED
+
+
+@pytest.mark.asyncio
+async def test_embed_batches_large_documents(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    calls: list[list[str]] = []
+
+    class _FakeEmbeddingClient:
+        async def create_embeddings(self, texts):
+            batch = list(texts)
+            calls.append(batch)
+            return {
+                "data": [
+                    {"embedding": [float(len(calls)), float(i)]}
+                    for i, _ in enumerate(batch)
+                ]
+            }
+
+    monkeypatch.setattr(
+        ingestion, "get_settings", lambda: Settings(embedding_batch_size=2)
+    )
+    monkeypatch.setattr(
+        ingestion, "_build_embedding_client", lambda: _FakeEmbeddingClient()
+    )
+
+    vectors = await ingestion._embed(["a", "b", "c", "d", "e"])
+
+    assert calls == [["a", "b"], ["c", "d"], ["e"]]
+    assert vectors == [[1.0, 0.0], [1.0, 1.0], [2.0, 0.0], [2.0, 1.0], [3.0, 0.0]]
+
+
+def test_embedding_batches_respect_character_limit() -> None:
+    batches = ingestion._embedding_batches(
+        ["aa", "bbb", "c", "dddd", "ee"],
+        max_count=10,
+        max_chars=5,
+    )
+
+    assert batches == [["aa", "bbb"], ["c", "dddd"], ["ee"]]
+
+
+@pytest.mark.asyncio
+async def test_embed_auto_splits_failed_batches(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    calls: list[list[str]] = []
+
+    class _FakeEmbeddingClient:
+        async def create_embeddings(self, texts):
+            batch = list(texts)
+            calls.append(batch)
+            if len(batch) > 1:
+                raise TimeoutError("batch too large")
+            return {"data": [{"embedding": [float(ord(batch[0]) - ord("a"))]}]}
+
+    monkeypatch.setattr(
+        ingestion,
+        "get_settings",
+        lambda: Settings(embedding_batch_size=4, embedding_batch_max_chars=999),
+    )
+    monkeypatch.setattr(
+        ingestion, "_build_embedding_client", lambda: _FakeEmbeddingClient()
+    )
+
+    vectors = await ingestion._embed(["a", "b", "c", "d"])
+
+    assert calls == [
+        ["a", "b", "c", "d"],
+        ["a", "b"],
+        ["a"],
+        ["b"],
+        ["c", "d"],
+        ["c"],
+        ["d"],
+    ]
+    assert vectors == [[0.0], [1.0], [2.0], [3.0]]

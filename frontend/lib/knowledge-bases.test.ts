@@ -2,7 +2,7 @@ import type { AxiosProgressEvent } from "axios";
 import MockAdapter from "axios-mock-adapter";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { api } from "./api";
+import { LONG_RUNNING_REQUEST_TIMEOUT_MS, api } from "./api";
 import { downloadBlob } from "./download";
 import {
   createKnowledgeBase,
@@ -33,19 +33,28 @@ describe("knowledge-bases API client", () => {
   });
 
   it("listKnowledgeBases hits GET /knowledge-bases", async () => {
-    mock.onGet("/knowledge-bases").reply(200, [
-      { id: 1, name: "A", description: null, file_count: 0, created_at: "t" },
-    ]);
+    mock
+      .onGet("/knowledge-bases")
+      .reply(200, [
+        { id: 1, name: "A", description: null, file_count: 0, created_at: "t" },
+      ]);
     const out = await listKnowledgeBases();
     expect(out).toHaveLength(1);
     expect(out[0]).toEqual({
-      id: 1, name: "A", description: null, file_count: 0, created_at: "t",
+      id: 1,
+      name: "A",
+      description: null,
+      file_count: 0,
+      created_at: "t",
     });
   });
 
   it("createKnowledgeBase POSTs name + description", async () => {
     mock.onPost("/knowledge-bases").reply((config) => {
-      expect(JSON.parse(config.data)).toEqual({ name: "New", description: "d" });
+      expect(JSON.parse(config.data)).toEqual({
+        name: "New",
+        description: "d",
+      });
       return [201, { id: 2, name: "New", description: "d", created_at: "t" }];
     });
     const out = await createKnowledgeBase({ name: "New", description: "d" });
@@ -67,10 +76,20 @@ describe("knowledge-bases API client", () => {
     mock.onPost("/knowledge-bases/3/files").reply((config) => {
       expect(config.data).toBeInstanceOf(FormData);
       expect(config.data.get("file")).toBeInstanceOf(File);
-      return [201, {
-        id: 9, knowledge_base_id: 3, filename: "x.txt", extension: "txt",
-        size_bytes: 1, status: "uploaded", status_error: null, created_at: "t",
-      }];
+      expect(config.timeout).toBe(LONG_RUNNING_REQUEST_TIMEOUT_MS);
+      return [
+        201,
+        {
+          id: 9,
+          knowledge_base_id: 3,
+          filename: "x.txt",
+          extension: "txt",
+          size_bytes: 1,
+          status: "uploaded",
+          status_error: null,
+          created_at: "t",
+        },
+      ];
     });
     const f = new File(["x"], "x.txt", { type: "text/plain" });
     const out = await uploadFile(3, f);
@@ -81,14 +100,31 @@ describe("knowledge-bases API client", () => {
     let lastPct = -1;
     mock.onPost("/knowledge-bases/3/files").reply((config) => {
       // Simulate axios progress event firing.
-      config.onUploadProgress?.({ loaded: 50, total: 100 } as unknown as AxiosProgressEvent);
-      config.onUploadProgress?.({ loaded: 100, total: 100 } as unknown as AxiosProgressEvent);
-      return [201, {
-        id: 9, knowledge_base_id: 3, filename: "x.txt", extension: "txt",
-        size_bytes: 1, status: "uploaded", status_error: null, created_at: "t",
-      }];
+      config.onUploadProgress?.({
+        loaded: 50,
+        total: 100,
+      } as unknown as AxiosProgressEvent);
+      config.onUploadProgress?.({
+        loaded: 100,
+        total: 100,
+      } as unknown as AxiosProgressEvent);
+      return [
+        201,
+        {
+          id: 9,
+          knowledge_base_id: 3,
+          filename: "x.txt",
+          extension: "txt",
+          size_bytes: 1,
+          status: "uploaded",
+          status_error: null,
+          created_at: "t",
+        },
+      ];
     });
-    await uploadFile(3, new File(["x"], "x.txt"), (pct) => { lastPct = pct; });
+    await uploadFile(3, new File(["x"], "x.txt"), (pct) => {
+      lastPct = pct;
+    });
     expect(lastPct).toBe(100);
   });
 
@@ -104,16 +140,20 @@ describe("knowledge-bases API client", () => {
         platform: "v93000",
         knowledge_type: "internal_bkm",
       });
-      return [200, {
-        file_id: 9,
-        doc_type: "guide",
-        intent: "how_to",
-        tags_topic: ["ate"],
-        vendor: "advantest",
-        platform: "v93000",
-        knowledge_type: "internal_bkm",
-        chunk_count: 2,
-      }];
+      expect(config.timeout).toBe(LONG_RUNNING_REQUEST_TIMEOUT_MS);
+      return [
+        200,
+        {
+          file_id: 9,
+          doc_type: "guide",
+          intent: "how_to",
+          tags_topic: ["ate"],
+          vendor: "advantest",
+          platform: "v93000",
+          knowledge_type: "internal_bkm",
+          chunk_count: 2,
+        },
+      ];
     });
 
     const out = await updateFileTags(3, 9, {
@@ -146,15 +186,27 @@ describe("knowledge-bases API client", () => {
   it("uploadFile does not invoke onProgress when e.total is 0", async () => {
     let called = false;
     mock.onPost("/knowledge-bases/3/files").reply((config) => {
-      config.onUploadProgress?.(
-        { loaded: 0, total: 0 } as unknown as AxiosProgressEvent
-      );
-      return [201, {
-        id: 9, knowledge_base_id: 3, filename: "x.txt", extension: "txt",
-        size_bytes: 1, status: "uploaded", status_error: null, created_at: "t",
-      }];
+      config.onUploadProgress?.({
+        loaded: 0,
+        total: 0,
+      } as unknown as AxiosProgressEvent);
+      return [
+        201,
+        {
+          id: 9,
+          knowledge_base_id: 3,
+          filename: "x.txt",
+          extension: "txt",
+          size_bytes: 1,
+          status: "uploaded",
+          status_error: null,
+          created_at: "t",
+        },
+      ];
     });
-    await uploadFile(3, new File(["x"], "x.txt"), () => { called = true; });
+    await uploadFile(3, new File(["x"], "x.txt"), () => {
+      called = true;
+    });
     expect(called).toBe(false);
   });
 });

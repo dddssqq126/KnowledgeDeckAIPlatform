@@ -8,9 +8,11 @@ from app.features.rag.services.tagger import DocTags
 class _CapturingClient:
     def __init__(self) -> None:
         self.points = None
+        self.calls = []
 
     def upsert(self, *, collection_name, points):  # noqa: ANN001
         self.points = points
+        self.calls.append((collection_name, points))
 
 
 @pytest.mark.asyncio
@@ -47,3 +49,44 @@ async def test_upsert_writes_tag_payload(monkeypatch) -> None:
     assert payload["vendor"] == "teradyne"
     assert payload["platform"] == "j750"
     assert payload["knowledge_type"] == "vendor_doc"
+
+
+@pytest.mark.asyncio
+async def test_upsert_chunks_batches_large_payloads(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    fake = _CapturingClient()
+    monkeypatch.setattr(qdrant_store, "_client", fake, raising=False)
+    monkeypatch.setattr(
+        qdrant_store,
+        "get_settings",
+        lambda: Settings(
+            qdrant_collection="test_collection", qdrant_upsert_batch_size=2
+        ),
+    )
+
+    tags = DocTags.empty()
+    chunks = [
+        {"text": f"chunk {i}", "page_number": i, "chunk_index": i} for i in range(5)
+    ]
+
+    await qdrant_store.upsert_chunks(
+        user_id=1,
+        kb_id=2,
+        file_id=3,
+        filename="large.txt",
+        chunks=chunks,
+        dense_vectors=[[float(i)] for i in range(5)],
+        sparse_vectors=[SparseVec(indices=[i], values=[1.0]) for i in range(5)],
+        tags=tags,
+    )
+
+    assert [len(points) for _, points in fake.calls] == [2, 2, 1]
+    assert [collection_name for collection_name, _ in fake.calls] == [
+        "test_collection",
+        "test_collection",
+        "test_collection",
+    ]
+    assert [
+        point.payload["chunk_index"] for _, points in fake.calls for point in points
+    ] == [0, 1, 2, 3, 4]

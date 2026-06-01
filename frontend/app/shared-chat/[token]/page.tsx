@@ -40,7 +40,7 @@ function SharedChatContent() {
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border bg-card/90 px-6 py-5 backdrop-blur">
-        <div className="mx-auto max-w-4xl">
+        <div className="mx-auto max-w-6xl">
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Shared conversation
           </div>
@@ -55,7 +55,7 @@ function SharedChatContent() {
         </div>
       </header>
 
-      <div className="mx-auto max-w-4xl px-6 py-7">
+      <div className="mx-auto max-w-6xl px-6 py-7">
         {error ? (
           <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
             {error}
@@ -90,7 +90,7 @@ function SharedMessage({ message }: { message: ChatMessage }) {
       >
         {isUser ? <User className="h-5 w-5" /> : <Bot className="h-5 w-5" />}
       </div>
-      <div className={`min-w-0 max-w-[88%] ${isUser ? "text-right" : "text-left"}`}>
+      <div className={`min-w-0 max-w-[96%] ${isUser ? "text-right" : "text-left"}`}>
         <div
           className={`min-w-0 max-w-full px-5 py-4 text-base leading-7 ${
             isUser

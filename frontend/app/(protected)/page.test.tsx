@@ -2,7 +2,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import ChatPage from "./page";
-import { getSession, shareChatSession } from "../../lib/chat";
+import { getSession, sendMessageFeedback, shareChatSession, streamChat } from "../../lib/chat";
+
+const chatInputMockState = vi.hoisted(() => ({ deepMode: false }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn() }),
@@ -10,7 +12,28 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("../../components/ChatInput", () => ({
-  ChatInput: () => <div data-testid="chat-input" />,
+  ChatInput: ({ onSend }: any) => (
+    <div data-testid="chat-input">
+      <label>
+        <input
+          aria-label="deepmmode"
+          type="checkbox"
+          onChange={(event) => {
+            chatInputMockState.deepMode = event.currentTarget.checked;
+          }}
+        />
+        deepmmode
+      </label>
+      <button
+        type="button"
+        onClick={() =>
+          onSend("Deep question", true, null, chatInputMockState.deepMode)
+        }
+      >
+        Send test message
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock("../../lib/chat-store", () => ({
@@ -42,6 +65,7 @@ vi.mock("../../lib/llm-info", () => ({
 
 vi.mock("../../lib/chat", () => ({
   getSession: vi.fn(),
+  sendMessageFeedback: vi.fn(),
   shareChatSession: vi.fn(),
   streamChat: vi.fn(),
 }));
@@ -49,6 +73,7 @@ vi.mock("../../lib/chat", () => ({
 describe("ChatPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    chatInputMockState.deepMode = false;
     Object.assign(navigator, {
       clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
@@ -86,5 +111,81 @@ describe("ChatPage", () => {
       );
     });
     expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+
+  it("shows source filenames without metadata tag chips", async () => {
+    vi.mocked(getSession).mockResolvedValueOnce({
+      id: 1,
+      title: "RAG onboarding checklist",
+      created_at: "2026-05-06T00:00:00Z",
+      updated_at: "2026-05-06T01:00:00Z",
+      messages: [
+        {
+          id: 22,
+          role: "assistant",
+          content: "Tagged citation answer",
+          citations: [
+            {
+              file_id: 7,
+              filename: "source.pdf",
+              doc_type: "standard",
+              vendor: "3gpp",
+              platform: "5g_nr",
+              knowledge_type: "spec",
+              tags_topic: ["ran"],
+            },
+          ],
+          created_at: "2026-05-06T00:10:00Z",
+        },
+      ],
+    });
+
+    render(<ChatPage />);
+
+    expect(await screen.findByText("source.pdf")).toBeInTheDocument();
+    expect(screen.queryByText("3gpp")).not.toBeInTheDocument();
+    expect(screen.queryByText("5g_nr")).not.toBeInTheDocument();
+    expect(screen.queryByText("spec")).not.toBeInTheDocument();
+    expect(screen.queryByText("#ran")).not.toBeInTheDocument();
+  });
+
+  it("sends deep mode in the stream request when deepmmode is checked", async () => {
+    vi.mocked(streamChat).mockResolvedValueOnce(undefined);
+    render(<ChatPage />);
+
+    await screen.findByText("Exportable answer");
+    fireEvent.click(screen.getByRole("checkbox", { name: "deepmmode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send test message" }));
+
+    await waitFor(() => {
+      expect(streamChat).toHaveBeenCalledWith(
+        {
+          session_id: 1,
+          message: "Deep question",
+          use_rag: true,
+          kb_ids: null,
+          deep_mode: true,
+        },
+        expect.any(Object),
+      );
+    });
+  });
+
+  it("records like and dislike feedback for assistant messages", async () => {
+    vi.mocked(sendMessageFeedback).mockResolvedValue(undefined);
+    render(<ChatPage />);
+
+    await screen.findByText("Exportable answer");
+    fireEvent.click(screen.getByRole("button", { name: "Like response" }));
+
+    await waitFor(() => {
+      expect(sendMessageFeedback).toHaveBeenCalledWith(21, "like");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Dislike response" }));
+
+    await waitFor(() => {
+      expect(sendMessageFeedback).toHaveBeenCalledWith(21, "dislike");
+    });
   });
 });

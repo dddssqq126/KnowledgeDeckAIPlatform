@@ -1,7 +1,12 @@
+import pytest
+
+from app.features.rag.services import tagger as tagger_mod
 from app.features.rag.services.tagger import (
     DocTags,
+    _TAGGER_SYSTEM,
     _parse_tags,
     enrich_text_for_embedding,
+    ensure_document_tags,
 )
 
 
@@ -24,28 +29,74 @@ def test_parse_well_formed_json() -> None:
 def test_parse_strips_code_fence() -> None:
     raw = '```json\n{"topic": ["x"], "doc_type": "guide", "intent": "conceptual"}\n```'
     tags = _parse_tags(raw)
-    assert tags.topic == ["x"]
+    assert tags.topic == []
     assert tags.doc_type == "guide"
 
 
-def test_parse_rejects_unknown_enum() -> None:
+def test_parse_rejects_unknown_doc_type_and_intent_but_keeps_flexible_tags() -> None:
     raw = (
         '{"topic": ["x"], "doc_type": "newspaper", "intent": "vibes",'
-        ' "vendor": "initech", "platform": "big-iron",'
+        ' "vendor": "Initech", "platform": "big-iron",'
         ' "knowledge_type": "memo"}'
     )
     tags = _parse_tags(raw)
     assert tags.doc_type is None
     assert tags.intent is None
-    assert tags.vendor == "unknown"
-    assert tags.platform == "unknown"
-    assert tags.knowledge_type == "unknown"
+    assert tags.vendor == "initech"
+    assert tags.platform == "big_iron"
+    assert tags.knowledge_type == "memo"
 
 
-def test_parse_caps_topics_at_five() -> None:
-    raw = '{"topic": ["a", "b", "c", "d", "e", "f", "g"]}'
+def test_parse_keeps_standards_and_protocol_tags() -> None:
+    raw = (
+        '{"topic": ["radio access", "wifi"], "vendor": "IEEE",'
+        ' "platform": "802.11ax", "knowledge_type": "Wireless Standard"}'
+    )
     tags = _parse_tags(raw)
-    assert tags.topic == ["a", "b", "c", "d", "e"]
+    assert tags.vendor == "ieee"
+    assert tags.platform == "802.11ax"
+    assert tags.knowledge_type == "wireless_standard"
+
+
+def test_parse_can_tag_5g_documents() -> None:
+    raw = (
+        '{"topic": ["5g", "nr"], "vendor": "3GPP",'
+        ' "platform": "5G NR", "knowledge_type": "specification"}'
+    )
+    tags = _parse_tags(raw)
+    assert tags.vendor == "3gpp"
+    assert tags.platform == "5g_nr"
+    assert tags.knowledge_type == "specification"
+
+
+def test_parse_caps_topics_at_ten() -> None:
+    raw = (
+        '{"topic": ["topic-01", "topic-02", "topic-03", "topic-04", '
+        '"topic-05", "topic-06", "topic-07", "topic-08", '
+        '"topic-09", "topic-10", "topic-11"]}'
+    )
+    tags = _parse_tags(raw)
+    assert tags.topic == [
+        "topic-01",
+        "topic-02",
+        "topic-03",
+        "topic-04",
+        "topic-05",
+        "topic-06",
+        "topic-07",
+        "topic-08",
+        "topic-09",
+        "topic-10",
+    ]
+
+
+def test_tagger_system_encourages_broad_topic_inference() -> None:
+    assert "Do not limit tags to ATE vendors" in _TAGGER_SYSTEM
+    assert "any source organization" in _TAGGER_SYSTEM
+    assert "up to the 10-topic limit" in _TAGGER_SYSTEM
+    assert "Every document must receive tags" in _TAGGER_SYSTEM
+    assert "proper nouns or specific technical identifiers" in _TAGGER_SYSTEM
+    assert "all, inc, rights, reserved" in _TAGGER_SYSTEM
 
 
 def test_parse_garbage_returns_empty() -> None:
@@ -73,10 +124,10 @@ def test_enrich_empty_tags_returns_text_unchanged() -> None:
     assert enrich_text_for_embedding("hello", DocTags.empty()) == "hello"
 
 
-def test_parse_drops_non_string_topics() -> None:
-    raw = '{"topic": ["ok", null, 42, "  ", "good"]}'
+def test_parse_drops_non_string_and_boilerplate_topics() -> None:
+    raw = '{"topic": ["OpenAPI", null, 42, "  ", "all rights reserved", "PCIe", "inc"]}'
     tags = _parse_tags(raw)
-    assert tags.topic == ["ok", "good"]
+    assert tags.topic == ["openapi", "pcie"]
 
 
 def test_parse_non_dict_json_returns_empty() -> None:
@@ -100,21 +151,33 @@ def test_parse_normalizes_platform_aliases() -> None:
     assert tags.knowledge_type == "internal_bkm"
 
 
-import pytest
-
-from app.features.rag.services import tagger as tagger_mod
+def test_ensure_document_tags_adds_deterministic_fallbacks() -> None:
+    tags = ensure_document_tags(
+        DocTags.empty(),
+        "Matter bridge commissioning standard for IoT devices",
+        "Matter-Bridge-Setup.pdf",
+    )
+    assert tags.topic[:3] == ["matter_bridge_setup", "matter", "iot"]
+    assert tags.doc_type == "guide"
+    assert tags.knowledge_type == "standard"
 
 
 @pytest.mark.asyncio
-async def test_generate_doc_tags_returns_empty_on_llm_error(monkeypatch) -> None:
+async def test_generate_doc_tags_returns_fallback_tags_on_llm_error(
+    monkeypatch,
+) -> None:
     class _BoomLLM:
         async def ainvoke(self, _messages):
             raise RuntimeError("vllm down")
 
     monkeypatch.setattr(tagger_mod, "_build_tagger_llm", lambda: _BoomLLM())
 
-    tags = await tagger_mod.generate_doc_tags("some document text", "doc.txt")
-    assert tags == DocTags.empty()
+    tags = await tagger_mod.generate_doc_tags(
+        "PCIe troubleshooting runbook", "PCIe-Troubleshooting-Runbook.txt"
+    )
+    assert tags.topic == ["pcie_troubleshooting_runbook", "pcie"]
+    assert tags.doc_type == "reference"
+    assert tags.knowledge_type == "document"
 
 
 @pytest.mark.asyncio
@@ -144,3 +207,23 @@ async def test_generate_doc_tags_parses_llm_output(monkeypatch) -> None:
     assert tags.platform == "generic"
     assert tags.knowledge_type == "code"
     assert any("kubernetes setup guide" in str(m.content) for m in fake.seen)
+
+
+@pytest.mark.asyncio
+async def test_generate_doc_tags_fills_missing_llm_fields(monkeypatch) -> None:
+    class _FakeResult:
+        content = '{"vendor": "ETSI"}'
+
+    class _FakeLLM:
+        async def ainvoke(self, _messages):
+            return _FakeResult()
+
+    monkeypatch.setattr(tagger_mod, "_build_tagger_llm", lambda: _FakeLLM())
+
+    tags = await tagger_mod.generate_doc_tags(
+        "OpenAPI payment authorization workflow", "payment-api-guide.md"
+    )
+    assert tags.vendor == "etsi"
+    assert tags.topic == ["payment_api_guide", "openapi"]
+    assert tags.doc_type == "api"
+    assert tags.knowledge_type == "document"

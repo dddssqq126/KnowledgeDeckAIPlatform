@@ -1,7 +1,14 @@
 "use client";
 
 import { Check, Copy, Download } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/light";
 import bash from "react-syntax-highlighter/dist/esm/languages/hljs/bash";
@@ -38,12 +45,30 @@ export function MarkdownMessage({ content }: { content: string }) {
     <div className="markdown-body">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        components={{ code: CodeBlock, pre: PreBlock, table: TableBlock }}
+        components={{
+          code: CodeBlock,
+          pre: PreBlock,
+          table: TableBlock,
+          td: TableCell,
+          th: TableHeaderCell,
+        }}
       >
-        {content}
+        {normalizeTableCellBreaks(content)}
       </ReactMarkdown>
     </div>
   );
+}
+
+
+function normalizeTableCellBreaks(content: string): string {
+  return content
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("|") || !trimmed.endsWith("|")) return line;
+      return line.replace(/<br\s*\/?>/gi, "\\n");
+    })
+    .join("\n");
 }
 
 // react-markdown v9 no longer passes an `inline` prop to the `code` renderer,
@@ -167,6 +192,58 @@ function TableBlock({ children }: { children?: ReactNode }) {
       </div>
     </div>
   );
+}
+
+function TableCell({ children, ...props }: { children?: ReactNode }) {
+  return <td {...props}>{renderTableCellChildren(children)}</td>;
+}
+
+function TableHeaderCell({ children, ...props }: { children?: ReactNode }) {
+  return <th {...props}>{renderTableCellChildren(children)}</th>;
+}
+
+function renderTableCellChildren(children: ReactNode): ReactNode {
+  return Children.toArray(children).flatMap((child, index) => {
+    if (typeof child === "string") {
+      return renderTableInlineText(child, `text-${index}`);
+    }
+    if (isValidElement<{ children?: ReactNode }>(child) && child.props.children) {
+      return cloneElement(child, {
+        key: child.key ?? `node-${index}`,
+        children: renderTableCellChildren(child.props.children),
+      });
+    }
+    return child;
+  });
+}
+
+function renderTableInlineText(text: string, keyPrefix: string): ReactNode[] {
+  const parts = text.split(/(<br\s*\/?>|\\n|\n)/gi);
+  const rendered: ReactNode[] = [];
+
+  parts.forEach((part, partIndex) => {
+    if (!part) return;
+    if (/^(<br\s*\/?>|\\n|\n)$/i.test(part)) {
+      rendered.push(<br key={`${keyPrefix}-br-${partIndex}`} />);
+      return;
+    }
+
+    const boldParts = part.split(/(\*\*[^*]+\*\*)/g);
+    boldParts.forEach((boldPart, boldIndex) => {
+      const match = /^\*\*([^*]+)\*\*$/.exec(boldPart);
+      if (match) {
+        rendered.push(
+          <strong key={`${keyPrefix}-strong-${partIndex}-${boldIndex}`}>
+            {match[1]}
+          </strong>,
+        );
+      } else if (boldPart) {
+        rendered.push(boldPart);
+      }
+    });
+  });
+
+  return rendered;
 }
 
 function tableToSpreadsheetXml(table: HTMLTableElement): string {

@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -32,11 +32,16 @@ from app.db.models import (
     ChatSessionShare,
     User,
 )
+from app.core.config import get_settings
 from app.features.chat.services import chat_service
-from app.features.rag.services import rag
+from app.features.knowledge_bases.services import file_service
+from app.features.rag.services import document_parser, rag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+MAX_CHAT_ATTACHMENTS = 5
+CHAT_ATTACHMENT_CONTEXT_CHARS = 30_000
 
 
 class SessionCreate(BaseModel):
@@ -76,6 +81,7 @@ class StreamRequest(BaseModel):
     message: str = Field(min_length=1)
     use_rag: bool = False
     kb_ids: list[int] | None = None
+    deep_mode: bool = False
 
 
 class MessageFeedbackIn(BaseModel):
@@ -318,8 +324,6 @@ async def update_session(
     return _session_out(s)
 
 
-
-
 @router.post("/messages/{message_id}/feedback", response_model=MessageFeedbackOut)
 async def upsert_message_feedback(
     message_id: int,
@@ -382,6 +386,149 @@ async def delete_session(
     await session.commit()
 
 
+def _parse_bool_field(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_kb_ids_field(value: Any) -> list[int] | None:
+    if value in (None, "", "null", "undefined"):
+        return None
+    if isinstance(value, list):
+        return [int(v) for v in value]
+    parsed = json.loads(str(value))
+    if parsed is None:
+        return None
+    if not isinstance(parsed, list):
+        raise ValueError("kb_ids must be a list")
+    return [int(v) for v in parsed]
+
+
+def _parse_form_payload(value: Any) -> dict[str, Any]:
+    if value in (None, ""):
+        return {}
+    parsed = json.loads(str(value))
+    if not isinstance(parsed, dict):
+        raise ValueError("payload must be an object")
+    return parsed
+
+
+def _form_or_payload(form: Any, payload: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        value = form.get(name)
+        if value not in (None, ""):
+            return value
+    for name in names:
+        if name in payload:
+            return payload[name]
+    return None
+
+
+async def _parse_stream_request(request: Request) -> tuple[StreamRequest, list[Any]]:
+    content_type = request.headers.get("content-type", "").lower()
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        try:
+            payload = _parse_form_payload(form.get("payload"))
+            body = StreamRequest.model_validate(
+                {
+                    "session_id": _form_or_payload(
+                        form, payload, "session_id", "sessionId"
+                    ),
+                    "message": _form_or_payload(form, payload, "message"),
+                    "use_rag": _parse_bool_field(
+                        _form_or_payload(form, payload, "use_rag", "useRag")
+                    ),
+                    "kb_ids": _parse_kb_ids_field(
+                        _form_or_payload(form, payload, "kb_ids", "kbIds")
+                    ),
+                    "deep_mode": _parse_bool_field(
+                        _form_or_payload(form, payload, "deep_mode", "deepMode")
+                    ),
+                }
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_stream_request"
+            ) from exc
+        uploads = []
+        for field_name in ("files", "attachments", "file"):
+            uploads.extend(
+                item for item in form.getlist(field_name) if hasattr(item, "filename")
+            )
+        return body, uploads[:MAX_CHAT_ATTACHMENTS]
+
+    try:
+        body = StreamRequest.model_validate(await request.json())
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_stream_request"
+        ) from exc
+    return body, []
+
+
+async def _attachment_context(uploads: list[Any]) -> str:
+    if not uploads:
+        return ""
+
+    settings = get_settings()
+    blocks: list[str] = ["User-uploaded files for this chat turn:"]
+    remaining_chars = CHAT_ATTACHMENT_CONTEXT_CHARS
+
+    for index, upload in enumerate(uploads, start=1):
+        filename = upload.filename or f"attachment-{index}"
+        try:
+            extension = file_service.validate_extension(filename)
+            data, _sha256, size = await file_service.stream_into_buffer(
+                upload, settings.max_upload_bytes
+            )
+            file_service.validate_content(extension, data[:1024])
+            segments = document_parser.parse(extension, data)
+        except file_service.ValidationError as exc:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, detail=f"{filename}: {exc.code}"
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, detail=f"{filename}: parse_failed"
+            ) from exc
+
+        if not segments:
+            blocks.append(
+                f"[Attachment {index}] {filename} ({size} bytes): no extractable text"
+            )
+            continue
+
+        parts: list[str] = []
+        for segment in segments:
+            label = (
+                f"page {segment.page_number}"
+                if segment.page_number is not None
+                else "content"
+            )
+            parts.append(f"--- {label} ---\n{segment.text.strip()}")
+        text = "\n\n".join(parts).strip()
+        if remaining_chars <= 0:
+            blocks.append(
+                f"[Attachment {index}] {filename}: omitted because attachment context limit was reached"
+            )
+            continue
+        if len(text) > remaining_chars:
+            text = (
+                text[:remaining_chars].rstrip()
+                + "\n[truncated due to attachment context limit]"
+            )
+            remaining_chars = 0
+        else:
+            remaining_chars -= len(text)
+        blocks.append(f"[Attachment {index}] {filename}\n{text}")
+
+    return "\n\n".join(blocks)
+
+
 def _sse(event: str, data: dict[str, Any]) -> str:
     """Format a single Server-Sent Events frame."""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -389,10 +536,12 @@ def _sse(event: str, data: dict[str, Any]) -> str:
 
 @router.post("/stream")
 async def stream_chat(
-    body: StreamRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
+    body, uploads = await _parse_stream_request(request)
+    attachment_context = await _attachment_context(uploads)
     # Load session + history + persist user message in the request session so
     # the streaming generator (which opens its own session) sees them.
     s = await _load_owned_session(
@@ -415,11 +564,13 @@ async def stream_chat(
     user_message = body.message
     use_rag = body.use_rag
     kb_ids = body.kb_ids
+    deep_mode = body.deep_mode
 
     async def generator() -> AsyncIterator[str]:
         try:
             citations: list[dict[str, Any]] = []
             context = ""
+            retrieval_note: str | None = None
             rag_query: str | None = None
             code_assist_intent: str | None = None
             query_tags: chat_service.QueryTags | None = None
@@ -447,8 +598,32 @@ async def stream_chat(
                         history=history, user_message=user_message
                     )
                 query_tags = chat_service.detect_query_tags(user_message, rag_query)
-                context, citations = await rag.retrieve_context(
-                    user_id=user_id, kb_ids=kb_ids, query=rag_query
+                if deep_mode:
+                    rag_result = await rag.retrieve_context_checked(
+                        user_id=user_id,
+                        kb_ids=kb_ids,
+                        query=rag_query,
+                        user_message=user_message,
+                        query_tags=query_tags,
+                        deep_mode=True,
+                    )
+                    context = rag_result.context
+                    citations = rag_result.citations
+                    retrieval_note = rag_result.diagnostics.retrieval_note()
+                else:
+                    context, citations = await rag.retrieve_context(
+                        user_id=user_id,
+                        kb_ids=kb_ids,
+                        query=rag_query,
+                        query_tags=query_tags,
+                        deep_mode=False,
+                    )
+
+            if attachment_context:
+                context = (
+                    f"{context}\n\n{attachment_context}"
+                    if context
+                    else attachment_context
                 )
 
             collected: list[str] = []
@@ -459,6 +634,7 @@ async def stream_chat(
                 rag_query=rag_query,
                 code_assist_intent=code_assist_intent,
                 query_tags=query_tags,
+                retrieval_note=retrieval_note,
             ):
                 collected.append(token)
                 yield _sse("token", {"text": token})
@@ -466,15 +642,17 @@ async def stream_chat(
             # Persist the assistant turn in a fresh session — request session
             # already returned to the pool when the response started streaming.
             factory = async_session_factory()
+            assistant_message_id: int | None = None
             async with factory() as save_session:
-                save_session.add(
-                    ChatMessage(
-                        session_id=session_id,
-                        role=ChatRole.ASSISTANT,
-                        content="".join(collected),
-                        citations=citations or None,
-                    )
+                assistant_message = ChatMessage(
+                    session_id=session_id,
+                    role=ChatRole.ASSISTANT,
+                    content="".join(collected),
+                    citations=citations or None,
                 )
+                save_session.add(assistant_message)
+                await save_session.flush()
+                assistant_message_id = assistant_message.id
                 touched = await save_session.scalar(
                     select(ChatSession).where(ChatSession.id == session_id)
                 )
@@ -483,7 +661,7 @@ async def stream_chat(
                 await save_session.commit()
 
             yield _sse("citations", {"items": citations})
-            yield _sse("done", {})
+            yield _sse("done", {"message_id": assistant_message_id})
         except Exception as exc:  # pragma: no cover - prototype
             logger.exception("chat_stream_failed session=%s", session_id)
             yield _sse("error", {"message": str(exc)[:300]})
