@@ -22,3 +22,7 @@ def test_prompt_has_answer_discipline_rules() -> None:
     assert "code blocks" in p
     assert "step-by-step" in p
     assert "do not fabricate" in p
+    assert "plot image" in p
+    assert "vba" in p
+    assert "transcribe" in p
+    assert "ocr" in p
