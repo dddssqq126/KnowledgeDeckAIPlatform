@@ -31,6 +31,9 @@ export function ChatInput({
   const [pickerInitialized, setPickerInitialized] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
+  const [validationMessage, setValidationMessage] = useState<string | null>(
+    null,
+  );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pickerRef = useRef<HTMLDivElement | null>(null);
 
@@ -51,10 +54,15 @@ export function ChatInput({
 
   function submit() {
     const trimmed = text.trim();
-    if (!trimmed || disabled) return;
+    if (disabled) return;
+    if (!trimmed) {
+      setValidationMessage("請記得輸入資料");
+      return;
+    }
     const kbIds = selectedKbIds.length === 0 ? null : selectedKbIds;
     onSend(trimmed, useRag, kbIds, useRag && deepMode, attachments);
     setText("");
+    setValidationMessage(null);
     setAttachments([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
@@ -89,7 +97,10 @@ export function ChatInput({
       <div className="mx-auto max-w-5xl rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2">
         <textarea
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            if (validationMessage) setValidationMessage(null);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -101,6 +112,15 @@ export function ChatInput({
           className="w-full resize-none bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500 disabled:opacity-50"
           disabled={disabled}
         />
+        {validationMessage ? (
+          <div
+            className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-200"
+            role="alert"
+            aria-live="polite"
+          >
+            {validationMessage}
+          </div>
+        ) : null}
         {attachments.length > 0 ? (
           <div className="mt-2 flex flex-wrap gap-2">
             {attachments.map((file, index) => (
@@ -220,7 +240,7 @@ export function ChatInput({
           <button
             type="button"
             onClick={submit}
-            disabled={disabled || !text.trim()}
+            disabled={disabled}
             className="rounded-md bg-foreground px-3 py-1.5 text-sm text-white disabled:opacity-50"
           >
             {disabled ? "..." : "Send"}
