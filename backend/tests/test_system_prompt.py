@@ -22,9 +22,7 @@ def test_prompt_has_answer_discipline_rules() -> None:
     assert "code blocks" in p
     assert "step-by-step" in p
     assert "do not fabricate" in p
-    assert "plot image" in p
     assert "vba" in p
-    assert "transcribe" in p
     assert "shmoo" in p
     assert "associated code" in p
     assert "only the description" in p
@@ -34,3 +32,7 @@ def test_prompt_has_answer_discipline_rules() -> None:
     assert "print the relevant code" in p
     assert "c# code" in p
     assert "code-backed" in p
+    assert "plot image" not in p
+    assert "screenshot" not in p
+    assert "image-derived" not in p
+    assert "transcribe" not in p
