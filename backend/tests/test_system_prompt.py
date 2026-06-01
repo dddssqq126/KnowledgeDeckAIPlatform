@@ -14,3 +14,25 @@ def test_prompt_has_answer_discipline_rules() -> None:
     assert "文件不足" in SYSTEM_PROMPT
     assert "clarifying question" in p
     assert "citation" in p
+    assert "programming language" in p
+    assert "do not generate new code" in p
+    assert "explicitly asks" in p
+    assert "functions" in p
+    assert "signatures" in p
+    assert "code blocks" in p
+    assert "step-by-step" in p
+    assert "do not fabricate" in p
+    assert "vba" in p
+    assert "shmoo" in p
+    assert "associated code" in p
+    assert "only the description" in p
+    assert "程式碼" in SYSTEM_PROMPT
+    assert "vbt" in p
+    assert "answer the" in p
+    assert "print the relevant code" in p
+    assert "c# code" in p
+    assert "code-backed" in p
+    assert "plot image" not in p
+    assert "screenshot" not in p
+    assert "image-derived" not in p
+    assert "transcribe" not in p
