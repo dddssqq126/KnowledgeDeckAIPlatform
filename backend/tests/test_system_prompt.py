@@ -19,3 +19,6 @@ def test_prompt_has_answer_discipline_rules() -> None:
     assert "explicitly asks" in p
     assert "functions" in p
     assert "signatures" in p
+    assert "code blocks" in p
+    assert "step-by-step" in p
+    assert "do not fabricate" in p
