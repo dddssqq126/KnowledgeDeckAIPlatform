@@ -103,6 +103,7 @@ export type StreamRequest = {
   use_rag: boolean;
   kb_ids: number[] | null;
   deep_mode?: boolean;
+  attachments?: File[];
 };
 
 export type StreamHandlers = {
@@ -130,15 +131,34 @@ export async function streamChat(
   const baseURL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
   let res: Response;
   try {
-    res = await fetch(`${baseURL}/chat/stream`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(req),
-      signal,
-    });
+    const attachments = req.attachments ?? [];
+    if (attachments.length > 0) {
+      const form = new FormData();
+      form.append("session_id", String(req.session_id));
+      form.append("message", req.message);
+      form.append("use_rag", String(req.use_rag));
+      form.append("kb_ids", JSON.stringify(req.kb_ids));
+      form.append("deep_mode", String(req.deep_mode ?? false));
+      for (const file of attachments) form.append("files", file);
+      res = await fetch(`${baseURL}/chat/stream`, {
+        method: "POST",
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: form,
+        signal,
+      });
+    } else {
+      res = await fetch(`${baseURL}/chat/stream`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(req),
+        signal,
+      });
+    }
   } catch (e) {
     handlers.onError(e instanceof Error ? e.message : "network error");
     return;

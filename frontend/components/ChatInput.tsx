@@ -12,6 +12,7 @@ type Props = {
     useRag: boolean,
     kbIds: number[] | null,
     deepMode: boolean,
+    attachments: File[],
   ) => void;
   showDeepMode?: boolean;
 };
@@ -29,6 +30,8 @@ export function ChatInput({
   const [selectedKbIds, setSelectedKbIds] = useState<number[]>([]);
   const [pickerInitialized, setPickerInitialized] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pickerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -50,14 +53,25 @@ export function ChatInput({
     const trimmed = text.trim();
     if (!trimmed || disabled) return;
     const kbIds = selectedKbIds.length === 0 ? null : selectedKbIds;
-    onSend(trimmed, useRag, kbIds, useRag && deepMode);
+    onSend(trimmed, useRag, kbIds, useRag && deepMode, attachments);
     setText("");
+    setAttachments([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   function toggleKb(id: number) {
     setSelectedKbIds((cur) =>
       cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id],
     );
+  }
+
+  function addAttachments(files: FileList | null) {
+    if (!files?.length) return;
+    setAttachments((current) => [...current, ...Array.from(files)]);
+  }
+
+  function removeAttachment(index: number) {
+    setAttachments((current) => current.filter((_, i) => i !== index));
   }
 
   const allSelected =
@@ -87,8 +101,45 @@ export function ChatInput({
           className="w-full resize-none bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500 disabled:opacity-50"
           disabled={disabled}
         />
+        {attachments.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {attachments.map((file, index) => (
+              <span
+                key={`${file.name}-${file.size}-${index}`}
+                className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-200"
+              >
+                <span className="max-w-48 truncate">{file.name}</span>
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(index)}
+                  className="text-zinc-400 hover:text-zinc-100"
+                  aria-label={`Remove ${file.name}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <div className="mt-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-3">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".pdf,.docx,.txt,.cs,.md,.py,.html,.css,.pptx"
+              onChange={(e) => addAttachments(e.target.files)}
+              className="hidden"
+              disabled={disabled}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={disabled}
+              className="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
+            >
+              Attach files
+            </button>
             <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-400">
               <input
                 type="checkbox"

@@ -123,6 +123,7 @@ export default function ChatPage() {
       useRag: boolean,
       kbIds: number[] | null,
       deepMode: boolean,
+      attachments: File[],
     ) => {
       let sid = activeId;
       if (sid == null) {
@@ -154,6 +155,7 @@ export default function ChatPage() {
           use_rag: useRag,
           kb_ids: kbIds,
           deep_mode: deepMode,
+          ...(attachments.length ? { attachments } : {}),
         },
         {
           onToken: (token) => {

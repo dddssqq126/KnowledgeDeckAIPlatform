@@ -177,6 +177,7 @@ export default function SlideSessionPage() {
       useRag: boolean,
       kbIds: number[] | null,
       _deepMode: boolean,
+      _attachments: File[],
     ) => {
       const optimistic: SlideMessage = {
         id: -Date.now(),

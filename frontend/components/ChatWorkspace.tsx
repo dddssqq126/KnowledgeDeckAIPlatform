@@ -98,6 +98,7 @@ export function ChatWorkspace({
       useRag: boolean,
       kbIds: number[] | null,
       _deepMode: boolean,
+      attachments: File[],
     ) => {
       let sid = activeId;
       if (sid == null) {
@@ -122,7 +123,13 @@ export function ChatWorkspace({
       let collectedCitations: Citation[] = [];
 
       await streamChat(
-        { session_id: sid, message: text, use_rag: useRag, kb_ids: kbIds },
+        {
+          session_id: sid,
+          message: text,
+          use_rag: useRag,
+          kb_ids: kbIds,
+          ...(attachments.length ? { attachments } : {}),
+        },
         {
           onToken: (t) => {
             collected += t;
