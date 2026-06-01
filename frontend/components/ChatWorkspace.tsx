@@ -98,7 +98,7 @@ export function ChatWorkspace({
       useRag: boolean,
       kbIds: number[] | null,
       _deepMode: boolean,
-      attachments: File[],
+      attachments: File[] = [],
     ) => {
       let sid = activeId;
       if (sid == null) {

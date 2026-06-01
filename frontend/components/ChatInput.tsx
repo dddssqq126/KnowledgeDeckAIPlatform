@@ -60,7 +60,8 @@ export function ChatInput({
       return;
     }
     const kbIds = selectedKbIds.length === 0 ? null : selectedKbIds;
-    onSend(trimmed, useRag, kbIds, useRag && deepMode, attachments);
+    const filesToSend = [...attachments];
+    onSend(trimmed, useRag, kbIds, useRag && deepMode, filesToSend);
     setText("");
     setValidationMessage(null);
     setAttachments([]);

@@ -123,7 +123,7 @@ export default function ChatPage() {
       useRag: boolean,
       kbIds: number[] | null,
       deepMode: boolean,
-      attachments: File[],
+      attachments: File[] = [],
     ) => {
       let sid = activeId;
       if (sid == null) {

@@ -113,6 +113,19 @@ export type StreamHandlers = {
   onError: (message: string) => void;
 };
 
+export function buildStreamFormData(req: StreamRequest): FormData {
+  const form = new FormData();
+  form.append("session_id", String(req.session_id));
+  form.append("message", req.message);
+  form.append("use_rag", String(req.use_rag));
+  form.append("kb_ids", JSON.stringify(req.kb_ids));
+  form.append("deep_mode", String(req.deep_mode ?? false));
+  for (const file of req.attachments ?? []) {
+    form.append("files", file, file.name);
+  }
+  return form;
+}
+
 /**
  * Streams a chat reply via SSE using fetch + ReadableStream so we can attach
  * the Bearer token (EventSource cannot set headers).
@@ -133,13 +146,7 @@ export async function streamChat(
   try {
     const attachments = req.attachments ?? [];
     if (attachments.length > 0) {
-      const form = new FormData();
-      form.append("session_id", String(req.session_id));
-      form.append("message", req.message);
-      form.append("use_rag", String(req.use_rag));
-      form.append("kb_ids", JSON.stringify(req.kb_ids));
-      form.append("deep_mode", String(req.deep_mode ?? false));
-      for (const file of attachments) form.append("files", file);
+      const form = buildStreamFormData(req);
       res = await fetch(`${baseURL}/chat/stream`, {
         method: "POST",
         headers: {
@@ -149,13 +156,14 @@ export async function streamChat(
         signal,
       });
     } else {
+      const { attachments: _attachments, ...jsonReq } = req;
       res = await fetch(`${baseURL}/chat/stream`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify(req),
+        body: JSON.stringify(jsonReq),
         signal,
       });
     }
