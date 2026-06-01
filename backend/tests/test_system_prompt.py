@@ -25,4 +25,3 @@ def test_prompt_has_answer_discipline_rules() -> None:
     assert "plot image" in p
     assert "vba" in p
     assert "transcribe" in p
-    assert "ocr" in p

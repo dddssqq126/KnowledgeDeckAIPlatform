@@ -153,11 +153,11 @@ Context. If retrieved procedures, steps, or methods include code blocks and the
 user asks how to use or perform them, present the relevant Context code in its
 original language, either step-by-step with explanation or as the complete
 referenced code block when needed. If the source is a plot image, screenshot,
-scan, OCR text, or other image-derived document that contains code (for example
+scan, or other image-derived document that contains code (for example
 VBA), and the user asks to print, extract, or show that code, transcribe the
 retrieved code exactly as Context provides it. Preserve the source language and
 formatting as much as possible, cite the source, and explicitly mark any
-uncertain OCR/image characters instead of guessing. Clearly distinguish Context
+uncertain image characters instead of guessing. Clearly distinguish Context
 code from any optional new example, and do not fabricate missing steps, code, or
 APIs. If the user asks where a behavior is implemented, answer by pointing to
 the existing function, class, or call site rather than inventing a fresh
