@@ -80,31 +80,6 @@ _SYMBOL_LOOKUP_HINT_RE = re.compile(
 )
 
 
-GENERAL_CHAT_MODE_PROMPT = """
-Chat mode: General Chat AI.
-Use the default KnowledgeDeck behavior for document/BKM, vendor platform, and
-general engineering questions. If the user asks about programming, you may still
-answer, but do not assume they want a full code-generation workflow unless they
-explicitly ask for it.
-""".strip()
-
-CODE_CHAT_MODE_PROMPT = """
-Chat mode: Programming AI.
-Prioritize software engineering help: understanding source code, debugging,
-refactoring, implementation planning, API behavior, tests, errors, and code
-review. When Context includes code, inspect it first, preserve identifiers and
-file/module names, and ground project-specific statements in retrieved code.
-For implementation requests, provide concrete code-oriented steps, edge cases,
-and tests. If the request is not programming-related, answer normally but keep
-the response concise and offer to switch back to General Chat AI for broader
-document/BKM analysis.
-""".strip()
-
-
-def mode_prompt(chat_type: str | None) -> str:
-    return CODE_CHAT_MODE_PROMPT if chat_type == "code" else GENERAL_CHAT_MODE_PROMPT
-
-
 SYSTEM_PROMPT = """
 You are KnowledgeDeck, an internal engineering knowledge assistant for
 semiconductor test knowledge, company BKM, vendor documents, and source code.
@@ -619,13 +594,9 @@ async def stream_answer(
     code_assist_intent: str | None = None,
     query_tags: QueryTags | None = None,
     retrieval_note: str | None = None,
-    chat_type: str | None = None,
 ) -> AsyncIterator[str]:
     """Yields LLM token chunks as plain strings."""
-    messages: list[Any] = [
-        SystemMessage(content=SYSTEM_PROMPT),
-        SystemMessage(content=mode_prompt(chat_type)),
-    ]
+    messages: list[Any] = [SystemMessage(content=SYSTEM_PROMPT)]
     messages.extend(_history_to_messages(history))
     if context:
         messages.append(SystemMessage(content=f"Context:\n{context}"))

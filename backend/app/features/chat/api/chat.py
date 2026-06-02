@@ -85,7 +85,6 @@ class StreamRequest(BaseModel):
     use_rag: bool = False
     kb_ids: list[int] | None = None
     deep_mode: bool = False
-    chat_type: Literal["general", "code"] | None = None
 
 
 class MessageFeedbackIn(BaseModel):
@@ -463,9 +462,6 @@ async def _parse_stream_request(request: Request) -> tuple[StreamRequest, list[A
                     "deep_mode": _parse_bool_field(
                         _form_or_payload(form, payload, "deep_mode", "deepMode")
                     ),
-                    "chat_type": _form_or_payload(
-                        form, payload, "chat_type", "chatType"
-                    ),
                 }
             )
         except Exception as exc:
@@ -583,7 +579,6 @@ async def stream_chat(
     use_rag = body.use_rag
     kb_ids = body.kb_ids
     deep_mode = body.deep_mode
-    chat_type = _normalize_chat_type(getattr(s, "chat_type", None))
 
     async def generator() -> AsyncIterator[str]:
         try:
@@ -654,7 +649,6 @@ async def stream_chat(
                 code_assist_intent=code_assist_intent,
                 query_tags=query_tags,
                 retrieval_note=retrieval_note,
-                chat_type=chat_type,
             ):
                 collected.append(token)
                 yield _sse("token", {"text": token})

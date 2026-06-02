@@ -122,7 +122,6 @@ export type StreamRequest = {
   use_rag: boolean;
   kb_ids: number[] | null;
   deep_mode?: boolean;
-  chat_type?: ChatType;
   attachments?: File[];
 };
 
@@ -147,11 +146,9 @@ export function buildStreamFormData(req: StreamRequest): FormData {
       use_rag: req.use_rag,
       kb_ids: req.kb_ids,
       deep_mode: req.deep_mode ?? false,
-      chat_type: req.chat_type ?? "general",
     }),
   );
   form.append("deep_mode", String(req.deep_mode ?? false));
-  form.append("chat_type", req.chat_type ?? "general");
   for (const file of req.attachments ?? []) {
     form.append("files", file, file.name);
   }

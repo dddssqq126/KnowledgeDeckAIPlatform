@@ -139,7 +139,6 @@ export function ChatWorkspace({
           message: text,
           use_rag: useRag,
           kb_ids: kbIds,
-          chat_type: activeChatType,
           ...(attachments.length ? { attachments } : {}),
         },
         {

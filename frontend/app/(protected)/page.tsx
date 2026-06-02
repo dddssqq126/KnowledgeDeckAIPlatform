@@ -168,7 +168,6 @@ export default function ChatPage() {
           use_rag: useRag,
           kb_ids: kbIds,
           deep_mode: deepMode,
-          chat_type: activeChatType,
           ...(attachments.length ? { attachments } : {}),
         },
         {

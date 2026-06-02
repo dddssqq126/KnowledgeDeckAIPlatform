@@ -168,7 +168,6 @@ describe("ChatPage", () => {
           use_rag: true,
           kb_ids: null,
           deep_mode: true,
-          chat_type: "general",
         },
         expect.any(Object),
       );
