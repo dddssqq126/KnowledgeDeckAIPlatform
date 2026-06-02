@@ -11,6 +11,7 @@ import {
   type ChatMessage,
   type Citation,
   type ChatFeedback,
+  type ChatType,
   getSession,
   sendMessageFeedback,
   shareChatSession,
@@ -33,8 +34,11 @@ export default function ChatPage() {
 
   const sidParam = params.get("sid");
   const activeId = sidParam ? Number(sidParam) : null;
+  const typeParam = params.get("t");
+  const requestedChatType: ChatType = typeParam === "code" ? "code" : "general";
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [activeChatType, setActiveChatType] = useState<ChatType>(requestedChatType);
   const [streamingText, setStreamingText] = useState("");
   const [streamingCitations, setStreamingCitations] = useState<Citation[] | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -74,19 +78,27 @@ export default function ChatPage() {
     if (activeId !== null) return;
     if (!loaded) return;
     if (sessions.length === 0) return;
-    router.replace(`/?sid=${sessions[0].id}`);
+    const first = sessions[0];
+    router.replace(`/?t=${first.chat_type}&sid=${first.id}`);
   }, [activeId, loaded, sessions, router]);
 
   useEffect(() => {
     if (activeId == null) {
       setMessages([]);
+      setActiveChatType(requestedChatType);
       return;
     }
     let cancelled = false;
     (async () => {
       try {
         const detail = await getSession(activeId);
-        if (!cancelled) setMessages(detail.messages);
+        if (!cancelled) {
+          setMessages(detail.messages);
+          setActiveChatType(detail.chat_type);
+          if (typeParam !== detail.chat_type) {
+            router.replace(`/?t=${detail.chat_type}&sid=${detail.id}`);
+          }
+        }
       } catch {
         if (!cancelled) setMessages([]);
       }
@@ -94,7 +106,7 @@ export default function ChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeId]);
+  }, [activeId, requestedChatType, typeParam]);
 
   useEffect(() => {
     shouldStickToBottomRef.current = true;
@@ -127,9 +139,10 @@ export default function ChatPage() {
     ) => {
       let sid = activeId;
       if (sid == null) {
-        const session = await newChat();
+        const session = await newChat(requestedChatType);
         sid = session.id;
-        router.replace(`/?sid=${sid}`);
+        setActiveChatType(session.chat_type);
+        router.replace(`/?t=${session.chat_type}&sid=${sid}`);
       }
 
       const optimisticUser: ChatMessage = {
@@ -188,7 +201,7 @@ export default function ChatPage() {
         },
       );
     },
-    [activeId, newChat, refresh, router, bumpUpdatedAt],
+    [activeId, activeChatType, newChat, refresh, router, bumpUpdatedAt, requestedChatType],
   );
 
   const handleShareChat = useCallback(async () => {
@@ -202,7 +215,7 @@ export default function ChatPage() {
     } catch (err) {
       window.alert(err instanceof Error ? err.message : "Failed to share chat");
     }
-  }, [activeId]);
+  }, [activeId, requestedChatType, typeParam]);
 
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current;
@@ -217,7 +230,9 @@ export default function ChatPage() {
         <div>
           <div className="text-base font-medium">{activeSessionTitle}</div>
           <div className="text-sm text-muted-foreground">
-            RAG-aware chat workspace
+            {activeChatType === "code"
+              ? "Programming AI workspace · t=code"
+              : "Chat AI workspace · t=general"}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -302,6 +317,7 @@ export default function ChatPage() {
         disabled={isStreaming}
         onSend={handleSend}
         showDeepMode
+        chatType={activeChatType}
       />
     </section>
   );

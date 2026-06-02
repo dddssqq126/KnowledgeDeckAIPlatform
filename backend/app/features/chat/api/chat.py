@@ -12,7 +12,7 @@ import logging
 import secrets
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -42,10 +42,12 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 MAX_CHAT_ATTACHMENTS = 5
 CHAT_ATTACHMENT_CONTEXT_CHARS = 30_000
-
+CHAT_TYPE_GENERAL = "general"
+CHAT_TYPE_CODE = "code"
 
 class SessionCreate(BaseModel):
     title: str | None = Field(default=None, max_length=200)
+    chat_type: Literal["general", "code"] = CHAT_TYPE_GENERAL
 
 
 class SessionUpdate(BaseModel):
@@ -55,6 +57,7 @@ class SessionUpdate(BaseModel):
 class SessionOut(BaseModel):
     id: int
     title: str
+    chat_type: Literal["general", "code"]
     created_at: str
     updated_at: str
 
@@ -168,10 +171,15 @@ def _detect_code_assist_intent(message: str) -> str | None:
     return "general code assistance"
 
 
+def _normalize_chat_type(value: str | None) -> Literal["general", "code"]:
+    return CHAT_TYPE_CODE if value == CHAT_TYPE_CODE else CHAT_TYPE_GENERAL
+
+
 def _session_out(s: ChatSession) -> SessionOut:
     return SessionOut(
         id=s.id,
         title=s.title,
+        chat_type=_normalize_chat_type(getattr(s, "chat_type", None)),
         created_at=s.created_at.isoformat(),
         updated_at=s.updated_at.isoformat(),
     )
@@ -215,7 +223,11 @@ async def create_session(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> SessionOut:
-    s = ChatSession(owner_user_id=user.id, title=body.title or "New Chat")
+    s = ChatSession(
+        owner_user_id=user.id,
+        title=body.title or "New Chat",
+        chat_type=body.chat_type,
+    )
     session.add(s)
     await session.commit()
     await session.refresh(s)
@@ -250,6 +262,7 @@ async def get_session(
     return SessionDetail(
         id=s.id,
         title=s.title,
+        chat_type=_normalize_chat_type(getattr(s, "chat_type", None)),
         created_at=s.created_at.isoformat(),
         updated_at=s.updated_at.isoformat(),
         messages=[_message_out(m) for m in s.messages],
@@ -304,6 +317,7 @@ async def get_shared_session(
     return SessionDetail(
         id=s.id,
         title=s.title,
+        chat_type=_normalize_chat_type(getattr(s, "chat_type", None)),
         created_at=s.created_at.isoformat(),
         updated_at=s.updated_at.isoformat(),
         messages=[_message_out(m) for m in s.messages],

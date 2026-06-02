@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import type { ChatType } from "../lib/chat";
 import type { KnowledgeBase } from "../lib/knowledge-bases";
 
 type Props = {
@@ -15,6 +16,7 @@ type Props = {
     attachments: File[],
   ) => void;
   showDeepMode?: boolean;
+  chatType?: ChatType;
 };
 
 export function ChatInput({
@@ -22,6 +24,7 @@ export function ChatInput({
   disabled,
   onSend,
   showDeepMode = false,
+  chatType = "general",
 }: Props) {
   const [text, setText] = useState("");
   // Default to RAG enabled. Empty `kb_ids` = no filter (all KBs) on the backend.
@@ -93,9 +96,42 @@ export function ChatInput({
         ? knowledgeBases.find((k) => k.id === selectedKbIds[0])?.name ?? "1 KB"
         : `${selectedKbIds.length} KBs`;
 
+  const promptSuggestions =
+    chatType === "code"
+      ? [
+          "請幫我 debug 這段程式碼",
+          "說明這個 function 的用途",
+          "幫我設計測試案例",
+        ]
+      : [
+          "整理這份文件的重點",
+          "比較不同平台的差異",
+          "產生可執行的操作步驟",
+        ];
+  const placeholder =
+    chatType === "code"
+      ? "Ask Programming AI about code, debugging, refactoring, or tests"
+      : "Ask Chat AI about documents, BKM, platforms, or general questions";
+
   return (
     <div className="border-t border-zinc-800 bg-zinc-950 p-3">
       <div className="mx-auto max-w-5xl rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-zinc-400">
+            {chatType === "code" ? "Programming AI prompts" : "Chat AI prompts"}
+          </span>
+          {promptSuggestions.map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              onClick={() => setText(prompt)}
+              disabled={disabled}
+              className="rounded-full border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
         <textarea
           value={text}
           onChange={(e) => {
@@ -108,7 +144,7 @@ export function ChatInput({
               submit();
             }
           }}
-          placeholder="Ask anything (Enter to send, Shift+Enter for newline)"
+          placeholder={`${placeholder} (Enter to send, Shift+Enter for newline)`}
           rows={2}
           className="w-full resize-none bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500 disabled:opacity-50"
           disabled={disabled}

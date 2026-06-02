@@ -43,6 +43,7 @@ vi.mock("../../lib/chat-store", () => ({
         {
           id: 1,
           title: "RAG onboarding checklist",
+          chat_type: "general",
           created_at: "2026-05-06T00:00:00Z",
           updated_at: "2026-05-06T01:00:00Z",
         },
@@ -80,6 +81,7 @@ describe("ChatPage", () => {
     vi.mocked(getSession).mockResolvedValue({
       id: 1,
       title: "RAG onboarding checklist",
+      chat_type: "general",
       created_at: "2026-05-06T00:00:00Z",
       updated_at: "2026-05-06T01:00:00Z",
       messages: [
@@ -117,6 +119,7 @@ describe("ChatPage", () => {
     vi.mocked(getSession).mockResolvedValueOnce({
       id: 1,
       title: "RAG onboarding checklist",
+      chat_type: "general",
       created_at: "2026-05-06T00:00:00Z",
       updated_at: "2026-05-06T01:00:00Z",
       messages: [
