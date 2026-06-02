@@ -4,6 +4,7 @@ import { create } from "zustand";
 
 import {
   type ChatSession,
+  type ChatType,
   createSession,
   deleteSession,
   listSessions,
@@ -14,7 +15,7 @@ type ChatSessionsState = {
   sessions: ChatSession[];
   loaded: boolean;
   refresh: () => Promise<void>;
-  newChat: () => Promise<ChatSession>;
+  newChat: (chatType?: ChatType) => Promise<ChatSession>;
   remove: (id: number) => Promise<void>;
   rename: (id: number, title: string) => Promise<ChatSession>;
   // Local-only update (e.g., after sending a message we already know the
@@ -33,8 +34,8 @@ export const useChatSessionsStore = create<ChatSessionsState>((set, get) => ({
       set({ loaded: true });
     }
   },
-  newChat: async () => {
-    const s = await createSession();
+  newChat: async (chatType = "general") => {
+    const s = await createSession(undefined, chatType);
     set({ sessions: [s, ...get().sessions] });
     return s;
   },

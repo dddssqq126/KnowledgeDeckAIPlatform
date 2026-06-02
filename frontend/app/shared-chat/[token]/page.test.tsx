@@ -22,6 +22,7 @@ describe("SharedChatPage", () => {
     vi.mocked(getSharedChat).mockResolvedValue({
       id: 1,
       title: "Shared RAG answer",
+      chat_type: "general",
       created_at: "2026-05-06T00:00:00Z",
       updated_at: "2026-05-06T01:00:00Z",
       messages: [

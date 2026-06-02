@@ -1,6 +1,6 @@
 "use client";
 
-import type { Citation, ChatMessage, ChatSession, SessionDetail } from "./chat";
+import type { Citation, ChatMessage, ChatSession, ChatType, SessionDetail } from "./chat";
 import type {
   KnowledgeBase,
   KnowledgeBaseCreated,
@@ -74,9 +74,9 @@ let filesByKb: Record<number, KnowledgeFile[]> = {
 };
 
 let chatSessions: ChatSession[] = [
-  chatSession(1, "RAG onboarding checklist", iso(160), iso(45)),
-  chatSession(2, "Postgres indexing explanation", iso(980), iso(920)),
-  chatSession(3, "Launch FAQ assistant", iso(1450), iso(1300)),
+  chatSession(1, "RAG onboarding checklist", iso(160), iso(45), "general"),
+  chatSession(2, "Postgres indexing explanation", iso(980), iso(920), "code"),
+  chatSession(3, "Launch FAQ assistant", iso(1450), iso(1300), "general"),
 ];
 
 let chatMessages: Record<number, ChatMessage[]> = {
@@ -228,8 +228,14 @@ function file(
   };
 }
 
-function chatSession(id: number, title: string, createdAt: string, updatedAt: string): ChatSession {
-  return { id, title, created_at: createdAt, updated_at: updatedAt };
+function chatSession(
+  id: number,
+  title: string,
+  createdAt: string,
+  updatedAt: string,
+  chatType: ChatType = "general",
+): ChatSession {
+  return { id, title, chat_type: chatType, created_at: createdAt, updated_at: updatedAt };
 }
 
 function chatMessage(
@@ -372,12 +378,16 @@ export function mockListSessions(): ChatSession[] {
   return clone(sortByUpdated(chatSessions));
 }
 
-export function mockCreateSession(title?: string): ChatSession {
+export function mockCreateSession(
+  title?: string,
+  chatType: ChatType = "general",
+): ChatSession {
   const created = chatSession(
     nextChatId++,
     title?.trim() || "New chat",
     new Date().toISOString(),
     new Date().toISOString(),
+    chatType,
   );
   chatSessions = [created, ...chatSessions];
   chatMessages[created.id] = [];

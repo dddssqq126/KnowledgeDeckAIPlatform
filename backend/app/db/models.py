@@ -134,6 +134,9 @@ class ChatSession(Base):
         ID_TYPE, ForeignKey("users.id"), nullable=False
     )
     title: Mapped[str] = mapped_column(Text, nullable=False, default="New Chat")
+    chat_type: Mapped[str] = mapped_column(
+        Text, nullable=False, default="general", server_default="general"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

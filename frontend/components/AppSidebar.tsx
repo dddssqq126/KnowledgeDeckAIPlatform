@@ -21,7 +21,7 @@ import { useEffect, useState } from "react";
 
 import { SidebarItemList } from "./SidebarItemList";
 import { useAuthStore } from "../lib/auth-store";
-import { searchChatSessions, type ChatSearchResult } from "../lib/chat";
+import { searchChatSessions, type ChatSearchResult, type ChatType } from "../lib/chat";
 import { useChatSessionsStore } from "../lib/chat-store";
 import { useKbStore } from "../lib/kb-store";
 import { useSlideStore } from "../lib/slide-store";
@@ -71,7 +71,7 @@ export function AppSidebar() {
         <NavLink href="/rag-databases" active={onRagDatabases} icon={Database}>
           RAG Databases
         </NavLink>
-        <NavLink href="/" active={onChat} icon={MessageSquare}>
+        <NavLink href="/?t=general" active={onChat} icon={MessageSquare}>
           Chat
         </NavLink>
         <NavLink href="/slides" active={onSlides} icon={Presentation}>
@@ -83,7 +83,7 @@ export function AppSidebar() {
       </nav>
 
       {onChat ? (
-        <ChatList activeSidParam={params.get("sid")} />
+        <ChatList activeSidParam={params.get("sid")} activeTypeParam={params.get("t")} />
       ) : onKb ? (
         <KbList activeIdParam={routeParams?.id ?? null} />
       ) : onSlides ? (
@@ -178,7 +178,13 @@ function NavLink({
 
 // --- Lower-list bindings: each variant subscribes to its own Zustand store ---
 
-function ChatList({ activeSidParam }: { activeSidParam: string | null }) {
+function ChatList({
+  activeSidParam,
+  activeTypeParam,
+}: {
+  activeSidParam: string | null;
+  activeTypeParam: string | null;
+}) {
   const router = useRouter();
   const sessions = useChatSessionsStore((s) => s.sessions);
   const loaded = useChatSessionsStore((s) => s.loaded);
@@ -187,6 +193,7 @@ function ChatList({ activeSidParam }: { activeSidParam: string | null }) {
   const remove = useChatSessionsStore((s) => s.remove);
   const rename = useChatSessionsStore((s) => s.rename);
   const activeId = activeSidParam ? Number(activeSidParam) : null;
+  const activeType: ChatType = activeTypeParam === "code" ? "code" : "general";
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ChatSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -222,9 +229,46 @@ function ChatList({ activeSidParam }: { activeSidParam: string | null }) {
     };
   }, [query]);
 
+  async function createModeChat(chatType: ChatType) {
+    const s = await newChat(chatType);
+    router.push(`/?t=${chatType}&sid=${s.id}`);
+  }
+
+  function sessionHref(id: number): string {
+    const session = sessions.find((item) => item.id === id);
+    const chatType = session?.chat_type ?? activeType;
+    return `/?t=${chatType}&sid=${id}`;
+  }
+
   return (
     <>
       <div className="border-t border-border px-3 pt-4">
+        <div className="mb-3 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => createModeChat("general")}
+            className={`rounded-md border px-3 py-2 text-left text-sm transition ${
+              activeType === "general"
+                ? "border-foreground/30 bg-muted text-foreground"
+                : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+          >
+            <div className="font-medium">Chat AI</div>
+            <div className="text-xs text-muted-foreground">t=general</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => createModeChat("code")}
+            className={`rounded-md border px-3 py-2 text-left text-sm transition ${
+              activeType === "code"
+                ? "border-foreground/30 bg-muted text-foreground"
+                : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+          >
+            <div className="font-medium">Programming AI</div>
+            <div className="text-xs text-muted-foreground">t=code</div>
+          </button>
+        </div>
         {query.trim() ? (
           <div className="mb-3 flex items-center justify-between px-1 text-sm font-medium uppercase tracking-wide text-muted-foreground">
             <span>Search Chats</span>
@@ -244,7 +288,7 @@ function ChatList({ activeSidParam }: { activeSidParam: string | null }) {
                 <button
                   key={`${item.session_id}:${item.created_at}:${item.snippet}`}
                   type="button"
-                  onClick={() => router.push(`/?sid=${item.session_id}`)}
+                  onClick={() => router.push(sessionHref(item.session_id))}
                   className={`w-full rounded-md px-3 py-2.5 text-left ${
                     item.session_id === activeId
                       ? "bg-muted text-foreground"
@@ -266,14 +310,14 @@ function ChatList({ activeSidParam }: { activeSidParam: string | null }) {
           items={sessions}
           loaded={loaded}
           activeId={activeId}
-          onSelect={(id) => router.push(`/?sid=${id}`)}
+          onSelect={(id) => router.push(sessionHref(id))}
           onCreate={async () => {
-            const s = await newChat();
-            router.push(`/?sid=${s.id}`);
+            const s = await newChat(activeType);
+            router.push(`/?t=${activeType}&sid=${s.id}`);
           }}
           onDelete={async (id) => {
             await remove(id);
-            if (id === activeId) router.push("/");
+            if (id === activeId) router.push(`/?t=${activeType}`);
           }}
           onRename={async (id, title) => {
             await rename(id, title);

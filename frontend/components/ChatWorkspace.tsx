@@ -13,6 +13,7 @@ import {
   type ChatMessage,
   type Citation,
   type ChatFeedback,
+  type ChatType,
   getSession,
   sendMessageFeedback,
   streamChat,
@@ -38,8 +39,11 @@ export function ChatWorkspace({
 
   const sidParam = params.get("sid");
   const activeId = sidParam ? Number(sidParam) : null;
+  const typeParam = params.get("t");
+  const requestedChatType: ChatType = typeParam === "code" ? "code" : "general";
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [activeChatType, setActiveChatType] = useState<ChatType>(requestedChatType);
 
   const knowledgeBases = useKbStore((s) => s.kbs);
   const kbsLoaded = useKbStore((s) => s.loaded);
@@ -61,12 +65,14 @@ export function ChatWorkspace({
     if (activeId !== null) return;
     if (!loaded) return;
     if (sessions.length === 0) return;
-    router.replace(`${routeBase}?sid=${sessions[0].id}`);
+    const first = sessions[0];
+    router.replace(`${routeBase}?t=${first.chat_type}&sid=${first.id}`);
   }, [activeId, loaded, sessions, router, routeBase]);
 
   useEffect(() => {
     if (activeId == null) {
       setMessages([]);
+      setActiveChatType(requestedChatType);
       return;
     }
     let cancelled = false;
@@ -75,6 +81,10 @@ export function ChatWorkspace({
         const detail = await getSession(activeId);
         if (cancelled) return;
         setMessages(detail.messages);
+        setActiveChatType(detail.chat_type);
+        if (params.get("t") !== detail.chat_type) {
+          router.replace(`${routeBase}?t=${detail.chat_type}&sid=${detail.id}`);
+        }
       } catch {
         if (!cancelled) setMessages([]);
       }
@@ -82,7 +92,7 @@ export function ChatWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeId]);
+  }, [activeId, requestedChatType, routeBase, typeParam]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -102,9 +112,10 @@ export function ChatWorkspace({
     ) => {
       let sid = activeId;
       if (sid == null) {
-        const s = await newChat();
+        const s = await newChat(requestedChatType);
         sid = s.id;
-        router.replace(`${routeBase}?sid=${sid}`);
+        setActiveChatType(s.chat_type);
+        router.replace(`${routeBase}?t=${s.chat_type}&sid=${sid}`);
       }
       const optimisticUser: ChatMessage = {
         id: -Date.now(),
@@ -128,6 +139,7 @@ export function ChatWorkspace({
           message: text,
           use_rag: useRag,
           kb_ids: kbIds,
+          chat_type: activeChatType,
           ...(attachments.length ? { attachments } : {}),
         },
         {
@@ -161,15 +173,16 @@ export function ChatWorkspace({
         },
       );
     },
-    [activeId, newChat, refresh, router, bumpUpdatedAt, routeBase],
+    [activeId, activeChatType, newChat, refresh, router, bumpUpdatedAt, routeBase, requestedChatType],
   );
 
   return (
     <section className="flex h-full flex-col bg-zinc-950 text-zinc-100">
       <header className="flex h-14 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4">
         <div className="text-sm font-medium">{activeSessionTitle}</div>
-        <div className="text-xs text-zinc-400">
-          Model: {llmInfo?.label ?? "…"}
+        <div className="text-right text-xs text-zinc-400">
+          <div>Model: {llmInfo?.label ?? "…"}</div>
+          <div>{activeChatType === "code" ? "Programming AI · t=code" : "Chat AI · t=general"}</div>
         </div>
       </header>
 
@@ -209,6 +222,7 @@ export function ChatWorkspace({
         knowledgeBases={knowledgeBases}
         disabled={isStreaming}
         onSend={handleSend}
+        chatType={activeChatType}
       />
     </section>
   );

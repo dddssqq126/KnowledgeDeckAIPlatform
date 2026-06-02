@@ -2,7 +2,14 @@
 
 import { api } from "./api";
 import { useAuthStore } from "./auth-store";
-import { mockAppendChatTurn, mockGetSharedSession, mockShareSession } from "./mock-data";
+import {
+  mockAppendChatTurn,
+  mockCreateSession,
+  mockGetSession,
+  mockGetSharedSession,
+  mockListSessions,
+  mockShareSession,
+} from "./mock-data";
 import { isMockDataMode } from "./mock-mode";
 
 export type Citation = {
@@ -15,9 +22,12 @@ export type Citation = {
   knowledge_type?: string;
 };
 
+export type ChatType = "general" | "code";
+
 export type ChatSession = {
   id: number;
   title: string;
+  chat_type: ChatType;
   created_at: string;
   updated_at: string;
 };
@@ -47,17 +57,26 @@ export type ChatSearchResult = {
   created_at: string;
 };
 
-export async function createSession(title?: string): Promise<ChatSession> {
-  const res = await api.post<ChatSession>("/chat/sessions", { title: title ?? null });
+export async function createSession(
+  title?: string,
+  chatType: ChatType = "general",
+): Promise<ChatSession> {
+  if (isMockDataMode()) return mockCreateSession(title, chatType);
+  const res = await api.post<ChatSession>("/chat/sessions", {
+    title: title ?? null,
+    chat_type: chatType,
+  });
   return res.data;
 }
 
 export async function listSessions(): Promise<ChatSession[]> {
+  if (isMockDataMode()) return mockListSessions();
   const res = await api.get<ChatSession[]>("/chat/sessions");
   return res.data;
 }
 
 export async function getSession(id: number): Promise<SessionDetail> {
+  if (isMockDataMode()) return mockGetSession(id);
   const res = await api.get<SessionDetail>(`/chat/sessions/${id}`);
   return res.data;
 }
@@ -103,6 +122,7 @@ export type StreamRequest = {
   use_rag: boolean;
   kb_ids: number[] | null;
   deep_mode?: boolean;
+  chat_type?: ChatType;
   attachments?: File[];
 };
 
@@ -127,9 +147,11 @@ export function buildStreamFormData(req: StreamRequest): FormData {
       use_rag: req.use_rag,
       kb_ids: req.kb_ids,
       deep_mode: req.deep_mode ?? false,
+      chat_type: req.chat_type ?? "general",
     }),
   );
   form.append("deep_mode", String(req.deep_mode ?? false));
+  form.append("chat_type", req.chat_type ?? "general");
   for (const file of req.attachments ?? []) {
     form.append("files", file, file.name);
   }
