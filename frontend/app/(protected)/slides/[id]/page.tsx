@@ -22,6 +22,7 @@ import remarkGfm from "remark-gfm";
 import { ChatInput } from "../../../../components/ChatInput";
 import { useKbStore } from "../../../../lib/kb-store";
 import { useLlmInfo } from "../../../../lib/llm-info";
+import { recordLoginRecordSilently } from "../../../../lib/login-records";
 import { useSlideStore } from "../../../../lib/slide-store";
 import {
   type SlideMessage,
@@ -103,6 +104,10 @@ export default function SlideSessionPage() {
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
+  useEffect(() => {
+    recordLoginRecordSilently();
+  }, [sessionId]);
+
   // Hydrate ambient state.
   useEffect(() => {
     if (!slidesLoaded) refreshSlides();
@@ -179,6 +184,8 @@ export default function SlideSessionPage() {
       _deepMode: boolean,
       _attachments: File[] = [],
     ) => {
+      recordLoginRecordSilently();
+
       const optimistic: SlideMessage = {
         id: -Date.now(),
         role: "user",

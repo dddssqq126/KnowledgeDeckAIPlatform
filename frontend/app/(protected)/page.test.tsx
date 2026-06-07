@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import ChatPage from "./page";
 import { getSession, sendMessageFeedback, shareChatSession, streamChat } from "../../lib/chat";
+import { recordLoginRecordSilently } from "../../lib/login-records";
 
 const chatInputMockState = vi.hoisted(() => ({ deepMode: false }));
 
@@ -70,6 +71,10 @@ vi.mock("../../lib/chat", () => ({
   streamChat: vi.fn(),
 }));
 
+vi.mock("../../lib/login-records", () => ({
+  recordLoginRecordSilently: vi.fn(),
+}));
+
 describe("ChatPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -109,6 +114,7 @@ describe("ChatPage", () => {
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
         "http://localhost:3000/shared-chat/abc123",
       );
+      expect(recordLoginRecordSilently).toHaveBeenCalledTimes(1);
     });
     expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
@@ -168,6 +174,7 @@ describe("ChatPage", () => {
         },
         expect.any(Object),
       );
+      expect(recordLoginRecordSilently).toHaveBeenCalledTimes(1);
     });
   });
 

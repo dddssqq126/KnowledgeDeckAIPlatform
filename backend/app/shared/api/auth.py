@@ -5,7 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.shared.api.deps import get_current_user
 from app.db.base import get_db
 from app.db.models import User
-from app.shared.services.auth_service import authenticate, get_or_create_user
+from app.shared.services.auth_service import (
+    authenticate,
+    create_login_record,
+    get_or_create_user,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -17,6 +21,14 @@ class LoginRequest(BaseModel):
 
 class ExternalLoginRequest(BaseModel):
     username: str = Field(min_length=1)
+
+
+class LoginRecordRequest(BaseModel):
+    DeptName: str | None = Field(default=None, max_length=255)
+    Chinesename: str | None = Field(default=None, max_length=255)
+    DeptID: str | None = Field(default=None, max_length=255)
+    EmpId: str | None = Field(default=None, max_length=255)
+    UserAccountName: str = Field(min_length=1, max_length=255)
 
 
 class UserSummary(BaseModel):
@@ -32,6 +44,16 @@ class LoginResponse(BaseModel):
 class MeResponse(BaseModel):
     id: int
     username: str
+    created_at: str
+
+
+class LoginRecordResponse(BaseModel):
+    id: int
+    DeptName: str | None
+    Chinesename: str | None
+    DeptID: str | None
+    EmpId: str | None
+    UserAccountName: str
     created_at: str
 
 
@@ -57,6 +79,33 @@ async def external_login(
     return LoginResponse(
         token=f"u_{user.id}",
         user=UserSummary(id=user.id, username=user.username),
+    )
+
+
+@router.post(
+    "/login-records",
+    response_model=LoginRecordResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def record_login(
+    body: LoginRecordRequest, session: AsyncSession = Depends(get_db)
+) -> LoginRecordResponse:
+    record = await create_login_record(
+        session,
+        dept_name=body.DeptName,
+        chinese_name=body.Chinesename,
+        dept_id=body.DeptID,
+        emp_id=body.EmpId,
+        user_account_name=body.UserAccountName,
+    )
+    return LoginRecordResponse(
+        id=record.id,
+        DeptName=record.dept_name,
+        Chinesename=record.chinese_name,
+        DeptID=record.dept_id,
+        EmpId=record.emp_id,
+        UserAccountName=record.user_account_name,
+        created_at=record.created_at.isoformat(),
     )
 
 

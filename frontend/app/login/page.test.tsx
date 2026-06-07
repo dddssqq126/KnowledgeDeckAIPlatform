@@ -1,15 +1,18 @@
 import { render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { UserProvider } from "../UserContext";
 import LoginPage from "./page";
-import { useAuthStore } from "../../lib/auth-store";
 import { api } from "../../lib/api";
+import { useAuthStore } from "../../lib/auth-store";
 
 const replaceMock = vi.fn();
+const routerMock = { replace: replaceMock };
+const searchParams = new URLSearchParams("username=alice");
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: replaceMock }),
-  useSearchParams: () => new URLSearchParams("username=alice"),
+  useRouter: () => routerMock,
+  useSearchParams: () => searchParams,
 }));
 
 vi.mock("../../lib/api", () => ({
@@ -29,12 +32,22 @@ describe("LoginPage", () => {
   });
 
   it("exchanges the external username for a real token then redirects home", async () => {
-    render(<LoginPage />);
+    render(
+      <UserProvider>
+        <LoginPage />
+      </UserProvider>,
+    );
 
     await waitFor(() => {
       expect(useAuthStore.getState().token).toBe("u_7");
     });
-    expect(api.post).toHaveBeenCalledWith("/auth/external", { username: "alice" });
+    expect(api.post).toHaveBeenCalledWith("/auth/external", {
+      username: "alice",
+    });
+    expect(api.post).not.toHaveBeenCalledWith(
+      "/auth/login-records",
+      expect.anything(),
+    );
     expect(useAuthStore.getState().user).toEqual({ id: 7, username: "alice" });
     expect(localStorage.getItem("knowledgedeck-external-username")).toBe("alice");
     expect(replaceMock).toHaveBeenCalledWith("/");

@@ -19,6 +19,7 @@ import {
 } from "../lib/chat";
 import { useKbStore } from "../lib/kb-store";
 import { useLlmInfo } from "../lib/llm-info";
+import { recordLoginRecordSilently } from "../lib/login-records";
 
 export function ChatWorkspace({
   routeBase,
@@ -106,6 +107,8 @@ export function ChatWorkspace({
         sid = s.id;
         router.replace(`${routeBase}?sid=${sid}`);
       }
+      recordLoginRecordSilently();
+
       const optimisticUser: ChatMessage = {
         id: -Date.now(),
         role: "user",
