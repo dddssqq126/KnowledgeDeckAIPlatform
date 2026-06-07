@@ -2,7 +2,11 @@
 
 import { api } from "./api";
 import { useAuthStore } from "./auth-store";
-import { mockAppendChatTurn, mockGetSharedSession, mockShareSession } from "./mock-data";
+import {
+  mockAppendChatTurn,
+  mockGetSharedSession,
+  mockShareSession,
+} from "./mock-data";
 import { isMockDataMode } from "./mock-mode";
 
 export type Citation = {
@@ -24,12 +28,21 @@ export type ChatSession = {
 
 export type ChatFeedback = "like" | "dislike";
 
+export type ChatAttachment = {
+  id: number;
+  filename: string;
+  extension: string;
+  size_bytes: number;
+  created_at: string;
+};
+
 export type ChatMessage = {
   id: number;
   role: "user" | "assistant";
   content: string;
   citations: Citation[] | null;
   created_at: string;
+  attachments?: ChatAttachment[];
 };
 
 export type SessionDetail = ChatSession & { messages: ChatMessage[] };
@@ -48,7 +61,9 @@ export type ChatSearchResult = {
 };
 
 export async function createSession(title?: string): Promise<ChatSession> {
-  const res = await api.post<ChatSession>("/chat/sessions", { title: title ?? null });
+  const res = await api.post<ChatSession>("/chat/sessions", {
+    title: title ?? null,
+  });
   return res.data;
 }
 
@@ -70,11 +85,16 @@ export async function shareChatSession(id: number): Promise<ChatShare> {
 
 export async function getSharedChat(token: string): Promise<SessionDetail> {
   if (isMockDataMode()) return mockGetSharedSession(token);
-  const res = await api.get<SessionDetail>(`/chat/shares/${encodeURIComponent(token)}`);
+  const res = await api.get<SessionDetail>(
+    `/chat/shares/${encodeURIComponent(token)}`,
+  );
   return res.data;
 }
 
-export async function updateSession(id: number, title: string): Promise<ChatSession> {
+export async function updateSession(
+  id: number,
+  title: string,
+): Promise<ChatSession> {
   const res = await api.patch<ChatSession>(`/chat/sessions/${id}`, { title });
   return res.data;
 }
@@ -83,18 +103,36 @@ export async function deleteSession(id: number): Promise<void> {
   await api.delete(`/chat/sessions/${id}`);
 }
 
-export async function searchChatSessions(q: string): Promise<ChatSearchResult[]> {
-  const res = await api.get<ChatSearchResult[]>("/chat/search", { params: { q } });
+export async function searchChatSessions(
+  q: string,
+): Promise<ChatSearchResult[]> {
+  const res = await api.get<ChatSearchResult[]>("/chat/search", {
+    params: { q },
+  });
   return res.data;
 }
-
-
 
 export async function sendMessageFeedback(
   messageId: number,
   feedback: ChatFeedback,
+  comment?: string,
 ): Promise<void> {
-  await api.post(`/chat/messages/${messageId}/feedback`, { feedback });
+  await api.post(`/chat/messages/${messageId}/feedback`, {
+    feedback,
+    comment: comment?.trim() || null,
+  });
+}
+
+export async function downloadChatAttachment(
+  attachmentId: number,
+): Promise<Blob> {
+  const res = await api.get<Blob>(
+    `/chat/attachments/${attachmentId}/download`,
+    {
+      responseType: "blob",
+    },
+  );
+  return res.data;
 }
 
 export type StreamRequest = {
@@ -151,7 +189,8 @@ export async function streamChat(
   }
 
   const token = useAuthStore.getState().token;
-  const baseURL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+  const baseURL =
+    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
   let res: Response;
   try {
     const attachments = req.attachments ?? [];
@@ -218,7 +257,8 @@ export async function streamChat(
       if (event === "token") handlers.onToken(parsed.text ?? "");
       else if (event === "citations") handlers.onCitations(parsed.items ?? []);
       else if (event === "done") handlers.onDone(parsed);
-      else if (event === "error") handlers.onError(parsed.message ?? "stream error");
+      else if (event === "error")
+        handlers.onError(parsed.message ?? "stream error");
     }
   }
 }

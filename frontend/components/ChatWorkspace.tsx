@@ -1,6 +1,16 @@
 "use client";
 
-import { Bot, Check, Copy, ThumbsDown, ThumbsUp, User } from "lucide-react";
+import {
+  Bot,
+  Check,
+  Copy,
+  Download,
+  FileText,
+  MessageSquare,
+  ThumbsDown,
+  ThumbsUp,
+  User,
+} from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -11,12 +21,15 @@ import { CitationList } from "./CitationList";
 import { useChatSessionsStore } from "../lib/chat-store";
 import {
   type ChatMessage,
+  type ChatAttachment,
   type Citation,
   type ChatFeedback,
+  downloadChatAttachment,
   getSession,
   sendMessageFeedback,
   streamChat,
 } from "../lib/chat";
+import { downloadBlob, safeFilename } from "../lib/download";
 import { useKbStore } from "../lib/kb-store";
 import { useLlmInfo } from "../lib/llm-info";
 
@@ -47,7 +60,9 @@ export function ChatWorkspace({
   const llmInfo = useLlmInfo();
 
   const [streamingText, setStreamingText] = useState("");
-  const [streamingCitations, setStreamingCitations] = useState<Citation[] | null>(null);
+  const [streamingCitations, setStreamingCitations] = useState<
+    Citation[] | null
+  >(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
 
@@ -89,7 +104,7 @@ export function ChatWorkspace({
   }, [messages, streamingText, isStreaming]);
 
   const activeSessionTitle = activeId
-    ? sessions.find((s) => s.id === activeId)?.title ?? pageTitle
+    ? (sessions.find((s) => s.id === activeId)?.title ?? pageTitle)
     : pageTitle;
 
   const handleSend = useCallback(
@@ -97,7 +112,7 @@ export function ChatWorkspace({
       text: string,
       useRag: boolean,
       kbIds: number[] | null,
-      _deepMode: boolean,
+      deepMode: boolean,
       attachments: File[] = [],
     ) => {
       let sid = activeId;
@@ -112,6 +127,15 @@ export function ChatWorkspace({
         content: text,
         citations: null,
         created_at: new Date().toISOString(),
+        attachments: attachments.map((file, index) => ({
+          id: -Date.now() - index - 10,
+          filename: file.name,
+          extension: file.name.includes(".")
+            ? (file.name.split(".").pop() ?? "")
+            : "",
+          size_bytes: file.size,
+          created_at: new Date().toISOString(),
+        })),
       };
       setMessages((cur) => [...cur, optimisticUser]);
       setStreamingText("");
@@ -128,6 +152,7 @@ export function ChatWorkspace({
           message: text,
           use_rag: useRag,
           kb_ids: kbIds,
+          deep_mode: deepMode,
           ...(attachments.length ? { attachments } : {}),
         },
         {
@@ -139,15 +164,18 @@ export function ChatWorkspace({
             collectedCitations = items;
             setStreamingCitations(items);
           },
-          onDone: () => {
+          onDone: (data) => {
             const finalAssistant: ChatMessage = {
-              id: -Date.now() - 1,
+              id: data?.message_id ?? -Date.now() - 1,
               role: "assistant",
               content: collected,
               citations: collectedCitations.length ? collectedCitations : null,
               created_at: new Date().toISOString(),
             };
             setMessages((cur) => [...cur, finalAssistant]);
+            void getSession(sid!).then((detail) =>
+              setMessages(detail.messages),
+            );
             setStreamingText("");
             setStreamingCitations(null);
             setIsStreaming(false);
@@ -157,6 +185,9 @@ export function ChatWorkspace({
           onError: (msg) => {
             setStreamError(msg);
             setIsStreaming(false);
+            void getSession(sid!).then((detail) =>
+              setMessages(detail.messages),
+            );
           },
         },
       );
@@ -244,7 +275,8 @@ function MessageBubble({
         >
           {isUser ? (
             <>
-              {message.content}
+              {message.content ? message.content : null}
+              <AttachmentList attachments={message.attachments ?? []} />
               {streaming ? <span className="ml-1 animate-pulse">▍</span> : null}
             </>
           ) : (
@@ -270,17 +302,54 @@ function MessageBubble({
   );
 }
 
+function AttachmentList({ attachments }: { attachments: ChatAttachment[] }) {
+  if (attachments.length === 0) return null;
 
+  async function handleDownload(attachment: ChatAttachment) {
+    if (attachment.id <= 0) return;
+    const blob = await downloadChatAttachment(attachment.id);
+    downloadBlob(
+      blob,
+      safeFilename(attachment.filename, `attachment-${attachment.id}`),
+    );
+  }
+
+  return (
+    <div className="mt-2 flex flex-col gap-1">
+      {attachments.map((attachment) => (
+        <button
+          key={`${attachment.id}-${attachment.filename}`}
+          type="button"
+          onClick={() => handleDownload(attachment)}
+          disabled={attachment.id <= 0}
+          className="flex max-w-sm items-center justify-between gap-3 rounded-md border border-zinc-600 bg-zinc-800/70 px-2 py-1.5 text-left text-xs text-zinc-100 hover:bg-zinc-800 disabled:cursor-default disabled:opacity-70"
+          title={attachment.id <= 0 ? "上傳後即可下載" : "下載附件"}
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <FileText className="h-3.5 w-3.5 shrink-0 text-zinc-300" />
+            <span className="truncate">{attachment.filename}</span>
+          </span>
+          <span className="flex shrink-0 items-center gap-2 text-zinc-400">
+            {formatBytes(attachment.size_bytes)}
+            <Download className="h-3.5 w-3.5" />
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function MessageActions({ message }: { message: ChatMessage }) {
   const [selected, setSelected] = useState<ChatFeedback | null>(null);
+  const [comment, setComment] = useState("");
+  const [commentOpen, setCommentOpen] = useState(false);
   const [sending, setSending] = useState(false);
 
   async function vote(feedback: ChatFeedback) {
     if (sending || message.id <= 0) return;
     setSending(true);
     try {
-      await sendMessageFeedback(message.id, feedback);
+      await sendMessageFeedback(message.id, feedback, comment);
       setSelected(feedback);
     } finally {
       setSending(false);
@@ -312,6 +381,41 @@ function MessageActions({ message }: { message: ChatMessage }) {
       >
         <ThumbsDown className="h-3 w-3" />
       </button>
+      <button
+        type="button"
+        onClick={() => setCommentOpen((open) => !open)}
+        disabled={message.id <= 0}
+        aria-label="Add feedback comment"
+        className={`rounded px-1 py-0.5 hover:bg-zinc-800 hover:text-zinc-100 ${
+          commentOpen || comment.trim() ? "text-sky-300" : ""
+        }`}
+      >
+        <MessageSquare className="h-3 w-3" />
+      </button>
+      {commentOpen ? (
+        <form
+          className="ml-1 flex items-center gap-1"
+          onSubmit={(e) => {
+            e.preventDefault();
+            vote(selected ?? "like");
+          }}
+        >
+          <input
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="輸入回覆"
+            maxLength={2000}
+            className="w-40 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-500"
+          />
+          <button
+            type="submit"
+            disabled={sending || message.id <= 0}
+            className="rounded bg-zinc-800 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-700 disabled:opacity-40"
+          >
+            送出
+          </button>
+        </form>
+      ) : null}
     </div>
   );
 }
@@ -392,6 +496,21 @@ function formatTimestamp(iso: string): string {
     minute: "2-digit",
   });
   if (sameDay) return time;
-  const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const date = d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
   return `${date}, ${time}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }

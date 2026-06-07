@@ -178,6 +178,36 @@ class ChatMessage(Base):
     feedbacks: Mapped[list["ChatMessageFeedback"]] = relationship(
         back_populates="message"
     )
+    attachments: Mapped[list["ChatMessageAttachment"]] = relationship(
+        back_populates="message", order_by="ChatMessageAttachment.id"
+    )
+
+
+class ChatMessageAttachment(Base):
+    __tablename__ = "chat_message_attachments"
+
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
+    message_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("chat_messages.id"), nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("users.id"), nullable=False
+    )
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    extension: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(ID_TYPE, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_key: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    message: Mapped[ChatMessage] = relationship(back_populates="attachments")
+
+    __table_args__ = (
+        Index("ix_chat_message_attachments_message_id", "message_id"),
+        Index("ix_chat_message_attachments_owner_id", "owner_user_id"),
+    )
 
 
 class ChatFeedbackType(enum.Enum):
@@ -205,6 +235,7 @@ class ChatMessageFeedback(Base):
         nullable=False,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

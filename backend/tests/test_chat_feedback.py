@@ -53,7 +53,7 @@ async def test_owner_can_upsert_assistant_message_feedback(
     first = await http_client.post(
         f"/chat/messages/{message.id}/feedback",
         headers=auth(alice),
-        json={"feedback": "like"},
+        json={"feedback": "like", "comment": "Great citation."},
     )
     second = await http_client.post(
         f"/chat/messages/{message.id}/feedback",
@@ -63,6 +63,7 @@ async def test_owner_can_upsert_assistant_message_feedback(
 
     assert first.status_code == 200
     assert first.json()["feedback"] == "like"
+    assert first.json()["comment"] == "Great citation."
     assert second.status_code == 200
     assert second.json()["feedback"] == "dislike"
 
@@ -76,6 +77,7 @@ async def test_owner_can_upsert_assistant_message_feedback(
     assert len(rows) == 1
     assert rows[0].feedback is ChatFeedbackType.DISLIKE
     assert rows[0].content == "Helpful answer"
+    assert rows[0].comment is None
 
 
 @pytest.mark.asyncio
