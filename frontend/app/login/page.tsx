@@ -5,6 +5,7 @@ import { Suspense, useEffect } from "react";
 
 import { api } from "../../lib/api";
 import { resolveExternalUsername, useAuthStore } from "../../lib/auth-store";
+import { resolveUserContextFromLocation, useUserContext } from "../UserContext";
 
 export default function LoginPage() {
   return (
@@ -18,10 +19,21 @@ function LoginRedirect() {
   const router = useRouter();
   const params = useSearchParams();
   const setSession = useAuthStore((s) => s.setSession);
+  const { setUserContext } = useUserContext();
 
   useEffect(() => {
     let cancelled = false;
-    const username = resolveExternalUsername();
+    const resolvedUserContext = resolveUserContextFromLocation();
+    const username =
+      resolvedUserContext.UserAccountName || resolveExternalUsername();
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("knowledgedeck-external-username", username);
+    }
+    const loginRecord = {
+      ...resolvedUserContext,
+      UserAccountName: username,
+    };
+    setUserContext(loginRecord);
     (async () => {
       try {
         // Passwordless login: exchange the URL-derived username for a real
@@ -43,7 +55,7 @@ function LoginRedirect() {
     return () => {
       cancelled = true;
     };
-  }, [params, router, setSession]);
+  }, [params, router, setSession, setUserContext]);
 
   return <LoginShell />;
 }

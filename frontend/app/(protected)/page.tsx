@@ -20,6 +20,7 @@ import { useChatSessionsStore } from "../../lib/chat-store";
 import { downloadKnowledgeFile } from "../../lib/knowledge-bases";
 import { useKbStore } from "../../lib/kb-store";
 import { useLlmInfo } from "../../lib/llm-info";
+import { recordLoginRecordSilently } from "../../lib/login-records";
 
 export default function ChatPage() {
   const router = useRouter();
@@ -132,6 +133,8 @@ export default function ChatPage() {
         router.replace(`/?sid=${sid}`);
       }
 
+      recordLoginRecordSilently();
+
       const optimisticUser: ChatMessage = {
         id: -Date.now(),
         role: "user",
@@ -195,6 +198,7 @@ export default function ChatPage() {
     if (activeId == null) return;
     try {
       const share = await shareChatSession(activeId);
+      recordLoginRecordSilently();
       const url = new URL(share.url_path, window.location.origin).toString();
       await copyText(url);
       setShareCopied(true);

@@ -2,12 +2,18 @@
 
 import { Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 
+import { recordLoginRecordSilently } from "../../../lib/login-records";
 import { useSlideStore } from "../../../lib/slide-store";
 
 export default function SlidesIndexPage() {
   const router = useRouter();
   const newSession = useSlideStore((s) => s.newSession);
+
+  useEffect(() => {
+    recordLoginRecordSilently();
+  }, []);
 
   async function handleNew() {
     const s = await newSession();

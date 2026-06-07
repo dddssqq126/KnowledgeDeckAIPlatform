@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import User
+from app.db.models import LoginRecord, User
 
 
 async def authenticate(session: AsyncSession, username: str, password: str) -> User | None:
@@ -28,3 +28,25 @@ async def get_or_create_user(session: AsyncSession, username: str) -> User:
     await session.commit()
     await session.refresh(user)
     return user
+
+
+async def create_login_record(
+    session: AsyncSession,
+    *,
+    dept_name: str | None,
+    chinese_name: str | None,
+    dept_id: str | None,
+    emp_id: str | None,
+    user_account_name: str,
+) -> LoginRecord:
+    record = LoginRecord(
+        dept_name=dept_name,
+        chinese_name=chinese_name,
+        dept_id=dept_id,
+        emp_id=emp_id,
+        user_account_name=user_account_name,
+    )
+    session.add(record)
+    await session.commit()
+    await session.refresh(record)
+    return record

@@ -29,6 +29,24 @@ class User(Base):
     )
 
 
+class LoginRecord(Base):
+    __tablename__ = "login_records"
+
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
+    dept_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    chinese_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dept_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    emp_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_account_name: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_login_records_user_account_name", "user_account_name"),
+    )
+
+
 class FileStatus(enum.Enum):
     UPLOADED = "uploaded"
     PARSING = "parsing"
