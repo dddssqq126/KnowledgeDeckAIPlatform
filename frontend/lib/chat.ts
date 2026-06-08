@@ -153,7 +153,7 @@ export type StreamRequest = {
 export type StreamHandlers = {
   onToken: (text: string) => void;
   onCitations: (items: Citation[]) => void;
-  onDone: (data?: { message_id?: number }) => void;
+  onDone: (data?: { message_id?: number; feedback_message_id?: number }) => void;
   onError: (message: string) => void;
 };
 
@@ -285,7 +285,7 @@ async function mockStreamChat(
   handlers: StreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
-  const { answer, citations } = mockAppendChatTurn(
+  const { answer, citations, assistantMessageId } = mockAppendChatTurn(
     req.session_id,
     req.message,
     req.use_rag,
@@ -300,7 +300,10 @@ async function mockStreamChat(
     handlers.onToken(token);
     await wait(22);
   }
-  handlers.onDone();
+  handlers.onDone({
+    message_id: assistantMessageId,
+    feedback_message_id: assistantMessageId,
+  });
 }
 
 function chunkText(text: string): string[] {

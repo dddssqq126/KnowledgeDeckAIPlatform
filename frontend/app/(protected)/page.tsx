@@ -172,7 +172,7 @@ export default function ChatPage() {
           },
           onDone: (data) => {
             const finalAssistant: ChatMessage = {
-              id: data?.message_id ?? -Date.now() - 1,
+              id: data?.feedback_message_id ?? data?.message_id ?? -Date.now() - 1,
               role: "assistant",
               content: collected,
               citations: collectedCitations.length ? collectedCitations : null,

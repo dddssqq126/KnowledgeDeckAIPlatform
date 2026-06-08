@@ -429,20 +429,22 @@ export function mockAppendChatTurn(
   text: string,
   useRag: boolean,
   kbIds: number[] | null,
-): { answer: string; citations: Citation[] } {
+): { answer: string; citations: Citation[]; assistantMessageId: number } {
   const selectedFiles = selectCitationFiles(kbIds);
   const citations = useRag ? selectedFiles.slice(0, 3).map((f) => ({ file_id: f.id, filename: f.filename })) : [];
   const answer = useRag
     ? `Mock LLM answer grounded in ${citations.length || "the selected"} RAG source(s).\n\nYou asked: "${text}"\n\nA practical next step is to compare the cited files, extract the shared decisions, and turn them into a short checklist.`
     : `Mock LLM answer without RAG.\n\nYou asked: "${text}"\n\nI can respond from general model context, but source citations are disabled for this turn.`;
   const createdAt = new Date().toISOString();
+  const userMessageId = nextChatMessageId++;
+  const assistantMessageId = nextChatMessageId++;
   chatMessages[sessionId] = [
     ...(chatMessages[sessionId] ?? []),
-    chatMessage(nextChatMessageId++, "user", text, null, createdAt),
-    chatMessage(nextChatMessageId++, "assistant", answer, citations.length ? citations : null, createdAt),
+    chatMessage(userMessageId, "user", text, null, createdAt),
+    chatMessage(assistantMessageId, "assistant", answer, citations.length ? citations : null, createdAt),
   ];
   touchChatSession(sessionId, text);
-  return { answer, citations };
+  return { answer, citations, assistantMessageId };
 }
 
 function touchChatSession(sessionId: number, firstMessageTitle?: string): void {

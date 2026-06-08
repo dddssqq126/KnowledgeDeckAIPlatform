@@ -73,6 +73,7 @@ async def test_chat_stream_deep_mode_uses_checked_retrieval(
 
     assert res.status_code == 200
     assert "event: token" in res.text
+    assert "feedback_message_id" in res.text
     assert captured["checked_kwargs"] == {
         "user_id": alice.id,
         "kb_ids": None,

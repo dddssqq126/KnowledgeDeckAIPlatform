@@ -815,7 +815,13 @@ async def stream_chat(
                 await save_session.commit()
 
             yield _sse("citations", {"items": citations})
-            yield _sse("done", {"message_id": assistant_message_id})
+            yield _sse(
+                "done",
+                {
+                    "message_id": assistant_message_id,
+                    "feedback_message_id": assistant_message_id,
+                },
+            )
         except Exception as exc:  # pragma: no cover - prototype
             logger.exception("chat_stream_failed session=%s", session_id)
             yield _sse("error", {"message": str(exc)[:300]})

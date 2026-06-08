@@ -283,7 +283,7 @@ describe("ChatPage", () => {
       });
     vi.mocked(streamChat).mockImplementationOnce(async (_request, handlers) => {
       handlers.onToken("Streamed answer");
-      handlers.onDone({ message_id: 99 });
+      handlers.onDone({ message_id: 99, feedback_message_id: 99 });
     });
     render(<ChatPage />);
 
@@ -291,7 +291,20 @@ describe("ChatPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send test message" }));
 
     expect(await screen.findByText("Streamed answer")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Like response" })).toHaveLength(2);
+    const likeButtons = screen.getAllByRole("button", { name: "Like response" });
+    expect(likeButtons).toHaveLength(2);
+
+    vi.mocked(sendMessageFeedback).mockResolvedValueOnce({
+      message_id: 99,
+      feedback: "like",
+      content: "Streamed answer",
+      updated_at: "2026-05-06T00:12:00Z",
+    });
+    fireEvent.click(likeButtons[1]);
+
+    await waitFor(() => {
+      expect(sendMessageFeedback).toHaveBeenCalledWith(99, "like");
+    });
   });
 
   it("shows a feedback error instead of silently failing", async () => {
