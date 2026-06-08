@@ -147,7 +147,7 @@ export type StreamRequest = {
 export type StreamHandlers = {
   onToken: (text: string) => void;
   onCitations: (items: Citation[]) => void;
-  onDone: (data?: { message_id?: number }) => void;
+  onDone: (data?: { message_id?: number; user_message?: ChatMessage }) => void;
   onError: (message: string) => void;
 };
 

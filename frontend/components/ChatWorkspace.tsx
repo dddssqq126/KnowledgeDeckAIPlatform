@@ -121,8 +121,9 @@ export function ChatWorkspace({
         sid = s.id;
         router.replace(`${routeBase}?sid=${sid}`);
       }
+      const optimisticUserId = -Date.now();
       const optimisticUser: ChatMessage = {
-        id: -Date.now(),
+        id: optimisticUserId,
         role: "user",
         content: text,
         citations: null,
@@ -172,10 +173,21 @@ export function ChatWorkspace({
               citations: collectedCitations.length ? collectedCitations : null,
               created_at: new Date().toISOString(),
             };
-            setMessages((cur) => [...cur, finalAssistant]);
-            void getSession(sid!).then((detail) =>
-              setMessages(detail.messages),
-            );
+            // Do not replace the whole history here. The optimistic user
+            // bubble is the only message that needs server IDs/attachment IDs;
+            // replacing all messages can wipe older attachment chips while the
+            // history endpoint catches up or if an older API omits attachment
+            // metadata.
+            setMessages((cur) => {
+              const next = data?.user_message
+                ? cur.map((message) =>
+                    message.id === optimisticUserId
+                      ? data.user_message!
+                      : message,
+                  )
+                : cur;
+              return [...next, finalAssistant];
+            });
             setStreamingText("");
             setStreamingCitations(null);
             setIsStreaming(false);

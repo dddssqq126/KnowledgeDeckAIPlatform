@@ -217,6 +217,16 @@ def _session_out(s: ChatSession) -> SessionOut:
     )
 
 
+def _attachment_out(a: ChatMessageAttachment) -> dict[str, Any]:
+    return {
+        "id": a.id,
+        "filename": a.filename,
+        "extension": a.extension,
+        "size_bytes": a.size_bytes,
+        "created_at": a.created_at.isoformat(),
+    }
+
+
 def _message_out(m: ChatMessage) -> MessageOut:
     return MessageOut(
         id=m.id,
@@ -224,16 +234,7 @@ def _message_out(m: ChatMessage) -> MessageOut:
         content=m.content,
         citations=m.citations,
         created_at=m.created_at.isoformat(),
-        attachments=[
-            {
-                "id": a.id,
-                "filename": a.filename,
-                "extension": a.extension,
-                "size_bytes": a.size_bytes,
-                "created_at": a.created_at.isoformat(),
-            }
-            for a in m.attachments
-        ],
+        attachments=[_attachment_out(a) for a in m.attachments],
     )
 
 
@@ -695,6 +696,7 @@ async def stream_chat(
     await session.flush()
 
     storage_client = get_storage_client()
+    attachment_rows: list[ChatMessageAttachment] = []
     for index, attachment in enumerate(parsed_attachments, start=1):
         row = ChatMessageAttachment(
             message_id=user_msg.id,
@@ -709,6 +711,7 @@ async def stream_chat(
             ),
         )
         session.add(row)
+        attachment_rows.append(row)
         try:
             await storage_client.put_object(
                 row.storage_key,
@@ -721,6 +724,16 @@ async def stream_chat(
             raise HTTPException(
                 status.HTTP_500_INTERNAL_SERVER_ERROR, detail="storage_error"
             ) from exc
+    await session.flush()
+    user_message_done = {
+        "id": user_msg.id,
+        "role": user_msg.role.value,
+        "content": user_msg.content,
+        "citations": user_msg.citations,
+        "created_at": user_msg.created_at.isoformat(),
+        "attachments": [_attachment_out(row) for row in attachment_rows],
+    }
+
     # Auto-title from first user message (within ~50 chars, single line).
     if not history:
         first_line = (
@@ -840,7 +853,13 @@ async def stream_chat(
                 await save_session.commit()
 
             yield _sse("citations", {"items": citations})
-            yield _sse("done", {"message_id": assistant_message_id})
+            yield _sse(
+                "done",
+                {
+                    "message_id": assistant_message_id,
+                    "user_message": user_message_done,
+                },
+            )
         except Exception as exc:  # pragma: no cover - prototype
             logger.exception("chat_stream_failed session=%s", session_id)
             yield _sse("error", {"message": str(exc)[:300]})
