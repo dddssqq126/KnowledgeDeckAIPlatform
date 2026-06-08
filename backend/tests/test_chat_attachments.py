@@ -1,8 +1,17 @@
 import io
+import json
 
 import pytest
+from starlette.requests import Request
 
-from app.db.models import ChatMessage, ChatMessageAttachment, ChatRole, ChatSession, User
+from app.db.models import (
+    ChatMessage,
+    ChatMessageAttachment,
+    ChatRole,
+    ChatSession,
+    User,
+)
+from app.features.chat.api.chat import _parse_stream_request
 from app.features.knowledge_bases.services.object_storage import get_storage_client
 
 
@@ -26,6 +35,67 @@ async def bob(db_session) -> User:
 
 def auth(user: User) -> dict[str, str]:
     return {"Authorization": f"Bearer u_{user.id}"}
+
+
+def _request_with_body(*, content_type: str, body: bytes) -> Request:
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/chat/stream",
+            "headers": [(b"content-type", content_type.encode())],
+        },
+        receive,
+    )
+
+
+@pytest.mark.asyncio
+async def test_parse_stream_request_accepts_text_without_attachments() -> None:
+    request = _request_with_body(
+        content_type="application/json",
+        body=json.dumps(
+            {
+                "session_id": 1,
+                "message": "Plain text question",
+                "use_rag": True,
+                "kb_ids": None,
+            }
+        ).encode(),
+    )
+
+    body, uploads = await _parse_stream_request(request)
+
+    assert body.message == "Plain text question"
+    assert uploads == []
+
+
+@pytest.mark.asyncio
+async def test_parse_stream_request_accepts_multipart_text_without_files() -> None:
+    boundary = "----kd-test-boundary"
+    multipart_body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="session_id"\r\n\r\n'
+        "1\r\n"
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="message"\r\n\r\n'
+        "Plain multipart question\r\n"
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="use_rag"\r\n\r\n'
+        "true\r\n"
+        f"--{boundary}--\r\n"
+    ).encode()
+    request = _request_with_body(
+        content_type=f"multipart/form-data; boundary={boundary}",
+        body=multipart_body,
+    )
+
+    body, uploads = await _parse_stream_request(request)
+
+    assert body.message == "Plain multipart question"
+    assert uploads == []
 
 
 @pytest.mark.asyncio
