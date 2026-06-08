@@ -196,7 +196,7 @@ class ChatMessage(Base):
         back_populates="message"
     )
     input_files: Mapped[list["ChatInputFile"]] = relationship(
-        back_populates="message"
+        back_populates="message", order_by="ChatInputFile.id"
     )
 
 

@@ -11,6 +11,8 @@ import {
   type ChatMessage,
   type Citation,
   type ChatFeedback,
+  type ChatInputFile,
+  downloadChatInputFile,
   getSession,
   sendMessageFeedback,
   shareChatSession,
@@ -178,9 +180,9 @@ export default function ChatPage() {
               feedback: null,
             };
             setMessages((current) => [...current, finalAssistant]);
-            if (finalAssistant.id <= 0) {
-              void getSession(sid!).then((detail) => setMessages(detail.messages));
-            }
+            void getSession(sid!)
+              .then((detail) => setMessages(detail.messages))
+              .catch(() => undefined);
             setStreamingText("");
             setStreamingCitations(null);
             setIsStreaming(false);
@@ -378,6 +380,9 @@ function MessageBubble({
               {streaming ? <span className="ml-1 animate-pulse">...</span> : null}
             </div>
           )}
+          {message.input_files && message.input_files.length > 0 ? (
+            <ChatInputFileList files={message.input_files} />
+          ) : null}
           {message.citations && message.citations.length > 0 ? (
             <CitationList citations={message.citations} />
           ) : null}
@@ -407,6 +412,44 @@ function MessageBubble({
             </>
           ) : null}
         </div>
+      </div>
+    </div>
+  );
+}
+
+
+function ChatInputFileList({ files }: { files: ChatInputFile[] }) {
+  async function handleDownload(file: ChatInputFile) {
+    try {
+      await downloadChatInputFile(file.id, file.filename);
+    } catch (err) {
+      window.alert(
+        err instanceof Error ? err.message : "Failed to download input file",
+      );
+    }
+  }
+
+  return (
+    <div className="mt-3 border-t border-border/60 pt-2 text-sm text-muted-foreground">
+      <span>Input files:</span>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {files.map((file) => (
+          <span
+            key={file.id}
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1"
+          >
+            <span>{file.filename}</span>
+            <button
+              type="button"
+              onClick={() => void handleDownload(file)}
+              aria-label={`Download input file ${file.filename}`}
+              title={`Download input file ${file.filename}`}
+              className="rounded p-0.5 hover:bg-muted hover:text-foreground"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </button>
+          </span>
+        ))}
       </div>
     </div>
   );

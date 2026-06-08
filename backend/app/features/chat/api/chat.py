@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,6 +63,14 @@ class SessionOut(BaseModel):
     updated_at: str
 
 
+class ChatInputFileOut(BaseModel):
+    id: int
+    filename: str
+    extension: str
+    size_bytes: int
+    created_at: str
+
+
 class MessageOut(BaseModel):
     id: int
     role: str
@@ -70,6 +78,7 @@ class MessageOut(BaseModel):
     citations: list[dict[str, Any]] | None
     created_at: str
     feedback: str | None = None
+    input_files: list[ChatInputFileOut] = Field(default_factory=list)
 
 
 class SessionDetail(SessionOut):
@@ -196,6 +205,16 @@ def _message_out(m: ChatMessage, *, owner_user_id: int | None = None) -> Message
         citations=m.citations,
         created_at=m.created_at.isoformat(),
         feedback=feedback,
+        input_files=[
+            ChatInputFileOut(
+                id=f.id,
+                filename=f.filename,
+                extension=f.extension,
+                size_bytes=f.size_bytes,
+                created_at=f.created_at.isoformat(),
+            )
+            for f in m.input_files
+        ],
     )
 
 
@@ -213,7 +232,8 @@ async def _load_owned_session(
     )
     if with_messages:
         stmt = stmt.options(
-            selectinload(ChatSession.messages).selectinload(ChatMessage.feedbacks)
+            selectinload(ChatSession.messages).selectinload(ChatMessage.feedbacks),
+            selectinload(ChatSession.messages).selectinload(ChatMessage.input_files),
         )
     s = await session.scalar(stmt)
     if s is None:
@@ -312,7 +332,10 @@ async def get_shared_session(
         .options(
             selectinload(ChatSessionShare.session)
                 .selectinload(ChatSession.messages)
-                .selectinload(ChatMessage.feedbacks)
+                .selectinload(ChatMessage.feedbacks),
+            selectinload(ChatSessionShare.session)
+                .selectinload(ChatSession.messages)
+                .selectinload(ChatMessage.input_files),
         )
     )
     if share is None or share.session is None or share.session.deleted_at is not None:
@@ -326,6 +349,39 @@ async def get_shared_session(
         updated_at=s.updated_at.isoformat(),
         messages=[_message_out(m, owner_user_id=user.id) for m in s.messages],
     )
+
+
+def _content_type_for(extension: str) -> str:
+    mapping = {
+        "pdf": "application/pdf",
+        "txt": "text/plain; charset=utf-8",
+        "cs": "text/x-csharp; charset=utf-8",
+        "md": "text/markdown; charset=utf-8",
+        "py": "text/x-python; charset=utf-8",
+        "html": "text/html; charset=utf-8",
+        "css": "text/css; charset=utf-8",
+        "csv": "text/csv; charset=utf-8",
+        "tsv": "text/tab-separated-values; charset=utf-8",
+        "docx": (
+            "application/vnd.openxmlformats-officedocument." "wordprocessingml.document"
+        ),
+        "pptx": (
+            "application/vnd.openxmlformats-officedocument."
+            "presentationml.presentation"
+        ),
+        "xlsx": (
+            "application/vnd.openxmlformats-officedocument." "spreadsheetml.sheet"
+        ),
+    }
+    return mapping.get(extension, "application/octet-stream")
+
+
+def _attachment_headers(filename: str, size_bytes: int) -> dict[str, str]:
+    safe_filename = filename.replace("\\", "_").replace("/", "_").replace('"', "'")
+    return {
+        "Content-Disposition": f'attachment; filename="{safe_filename}"',
+        "Content-Length": str(size_bytes),
+    }
 
 
 @router.patch("/sessions/{session_id}", response_model=SessionOut)
@@ -390,6 +446,38 @@ async def upsert_message_feedback(
         feedback=row.feedback.value,
         content=row.content,
         updated_at=row.updated_at.isoformat(),
+    )
+
+
+@router.get("/input-files/{file_id}/download")
+async def download_input_file(
+    file_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    row = await session.scalar(
+        select(ChatInputFile)
+        .join(ChatSession, ChatSession.id == ChatInputFile.session_id)
+        .where(
+            ChatInputFile.id == file_id,
+            ChatInputFile.owner_user_id == user.id,
+            ChatSession.deleted_at.is_(None),
+        )
+    )
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="input_file_not_found")
+
+    try:
+        data = await get_storage_client().get_object(row.storage_key)
+    except Exception:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, detail="storage_error"
+        )
+
+    return Response(
+        content=data,
+        media_type=_content_type_for(row.extension),
+        headers=_attachment_headers(row.filename, len(data)),
     )
 
 

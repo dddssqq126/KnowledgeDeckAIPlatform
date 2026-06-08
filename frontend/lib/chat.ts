@@ -2,6 +2,7 @@
 
 import { api } from "./api";
 import { useAuthStore } from "./auth-store";
+import { downloadBlob, safeFilename } from "./download";
 import { mockAppendChatTurn, mockGetSharedSession, mockShareSession } from "./mock-data";
 import { isMockDataMode } from "./mock-mode";
 
@@ -24,6 +25,14 @@ export type ChatSession = {
 
 export type ChatFeedback = "like" | "dislike";
 
+export type ChatInputFile = {
+  id: number;
+  filename: string;
+  extension: string;
+  size_bytes: number;
+  created_at: string;
+};
+
 export type ChatMessage = {
   id: number;
   role: "user" | "assistant";
@@ -31,6 +40,7 @@ export type ChatMessage = {
   citations: Citation[] | null;
   created_at: string;
   feedback?: ChatFeedback | null;
+  input_files?: ChatInputFile[];
 };
 
 export type SessionDetail = ChatSession & { messages: ChatMessage[] };
@@ -106,6 +116,29 @@ export async function sendMessageFeedback(
     { feedback },
   );
   return res.data;
+}
+
+export async function downloadChatInputFile(
+  fileId: number,
+  fallbackFilename: string,
+): Promise<void> {
+  const res = await api.get<Blob>(`/chat/input-files/${fileId}/download`, {
+    responseType: "blob",
+  });
+  const filename =
+    filenameFromContentDisposition(res.headers["content-disposition"]) ??
+    safeFilename(fallbackFilename, `chat-input-${fileId}`);
+  downloadBlob(res.data, filename);
+}
+
+function filenameFromContentDisposition(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(value);
+  if (utf8?.[1]) return safeFilename(decodeURIComponent(utf8[1]));
+  const quoted = /filename="([^"]+)"/i.exec(value);
+  if (quoted?.[1]) return safeFilename(quoted[1]);
+  const bare = /filename=([^;]+)/i.exec(value);
+  return bare?.[1] ? safeFilename(bare[1]) : null;
 }
 
 export type StreamRequest = {
