@@ -40,6 +40,7 @@ export default function ChatPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
 
   const knowledgeBases = useKbStore((s) => s.kbs);
   const kbsLoaded = useKbStore((s) => s.loaded);
@@ -143,6 +144,7 @@ export default function ChatPage() {
       setStreamingText("");
       setStreamingCitations(null);
       setStreamError(null);
+      setFeedbackError(null);
       setIsStreaming(true);
 
       let collected = "";
@@ -173,8 +175,12 @@ export default function ChatPage() {
               content: collected,
               citations: collectedCitations.length ? collectedCitations : null,
               created_at: new Date().toISOString(),
+              feedback: null,
             };
             setMessages((current) => [...current, finalAssistant]);
+            if (finalAssistant.id <= 0) {
+              void getSession(sid!).then((detail) => setMessages(detail.messages));
+            }
             setStreamingText("");
             setStreamingCitations(null);
             setIsStreaming(false);
@@ -190,6 +196,20 @@ export default function ChatPage() {
     },
     [activeId, newChat, refresh, router, bumpUpdatedAt],
   );
+
+
+  const handleFeedbackSaved = useCallback((messageId: number, feedback: ChatFeedback) => {
+    setFeedbackError(null);
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === messageId ? { ...message, feedback } : message,
+      ),
+    );
+  }, []);
+
+  const handleFeedbackError = useCallback((message: string) => {
+    setFeedbackError(message);
+  }, []);
 
   const handleShareChat = useCallback(async () => {
     if (activeId == null) return;
@@ -271,6 +291,8 @@ export default function ChatPage() {
               key={message.id}
               message={message}
               sessionTitle={activeSessionTitle}
+              onFeedbackSaved={handleFeedbackSaved}
+              onFeedbackError={handleFeedbackError}
             />
           ))}
 
@@ -284,6 +306,8 @@ export default function ChatPage() {
                 created_at: new Date().toISOString(),
               }}
               sessionTitle={activeSessionTitle}
+              onFeedbackSaved={handleFeedbackSaved}
+              onFeedbackError={handleFeedbackError}
               streaming
             />
           ) : null}
@@ -291,6 +315,11 @@ export default function ChatPage() {
           {streamError ? (
             <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
               Stream error: {streamError}
+            </div>
+          ) : null}
+          {feedbackError ? (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              Feedback error: {feedbackError}
             </div>
           ) : null}
           <div ref={messagesEndRef} />
@@ -311,10 +340,14 @@ function MessageBubble({
   message,
   sessionTitle,
   streaming = false,
+  onFeedbackSaved,
+  onFeedbackError,
 }: {
   message: ChatMessage;
   sessionTitle: string;
   streaming?: boolean;
+  onFeedbackSaved?: (messageId: number, feedback: ChatFeedback) => void;
+  onFeedbackError?: (message: string) => void;
 }) {
   const isUser = message.role === "user";
   const ts = formatTimestamp(message.created_at);
@@ -366,7 +399,11 @@ function MessageBubble({
                 <Share2 className="h-4 w-4" />
                 Export
               </IconAction>
-              <MessageFeedbackActions message={message} />
+              <MessageFeedbackActions
+                message={message}
+                onSaved={onFeedbackSaved}
+                onError={onFeedbackError}
+              />
             </>
           ) : null}
         </div>
@@ -412,17 +449,33 @@ function CitationList({ citations }: { citations: Citation[] }) {
   );
 }
 
-function MessageFeedbackActions({ message }: { message: ChatMessage }) {
-  const [selected, setSelected] = useState<ChatFeedback | null>(null);
+function MessageFeedbackActions({
+  message,
+  onSaved,
+  onError,
+}: {
+  message: ChatMessage;
+  onSaved?: (messageId: number, feedback: ChatFeedback) => void;
+  onError?: (message: string) => void;
+}) {
+  const [selected, setSelected] = useState<ChatFeedback | null>(message.feedback ?? null);
   const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    setSelected(message.feedback ?? null);
+  }, [message.feedback]);
   const disabled = sending || message.id <= 0;
 
   async function vote(feedback: ChatFeedback) {
     if (disabled) return;
     setSending(true);
     try {
-      await sendMessageFeedback(message.id, feedback);
-      setSelected(feedback);
+      const saved = await sendMessageFeedback(message.id, feedback);
+      setSelected(saved.feedback);
+      onSaved?.(message.id, saved.feedback);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to send feedback";
+      onError?.(message);
     } finally {
       setSending(false);
     }

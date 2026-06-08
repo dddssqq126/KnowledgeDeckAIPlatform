@@ -172,7 +172,19 @@ describe("ChatPage", () => {
   });
 
   it("records like and dislike feedback for assistant messages", async () => {
-    vi.mocked(sendMessageFeedback).mockResolvedValue(undefined);
+    vi.mocked(sendMessageFeedback)
+      .mockResolvedValueOnce({
+        message_id: 21,
+        feedback: "like",
+        content: "Exportable answer",
+        updated_at: "2026-05-06T00:11:00Z",
+      })
+      .mockResolvedValueOnce({
+        message_id: 21,
+        feedback: "dislike",
+        content: "Exportable answer",
+        updated_at: "2026-05-06T00:12:00Z",
+      });
     render(<ChatPage />);
 
     await screen.findByText("Exportable answer");
@@ -187,5 +199,29 @@ describe("ChatPage", () => {
     await waitFor(() => {
       expect(sendMessageFeedback).toHaveBeenCalledWith(21, "dislike");
     });
+  });
+
+  it("shows feedback actions immediately after a streamed assistant message is done", async () => {
+    vi.mocked(streamChat).mockImplementationOnce(async (_request, handlers) => {
+      handlers.onToken("Streamed answer");
+      handlers.onDone({ message_id: 99 });
+    });
+    render(<ChatPage />);
+
+    await screen.findByText("Exportable answer");
+    fireEvent.click(screen.getByRole("button", { name: "Send test message" }));
+
+    expect(await screen.findByText("Streamed answer")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Like response" })).toHaveLength(2);
+  });
+
+  it("shows a feedback error instead of silently failing", async () => {
+    vi.mocked(sendMessageFeedback).mockRejectedValueOnce(new Error("feedback failed"));
+    render(<ChatPage />);
+
+    await screen.findByText("Exportable answer");
+    fireEvent.click(screen.getByRole("button", { name: "Like response" }));
+
+    expect(await screen.findByText("Feedback error: feedback failed")).toBeInTheDocument();
   });
 });

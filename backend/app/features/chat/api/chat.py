@@ -7,6 +7,7 @@ dependency. Sessions are user-scoped — cross-user access returns 404.
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import secrets
@@ -25,16 +26,19 @@ from app.shared.api.deps import get_current_user
 from app.db.base import async_session_factory, get_db
 from app.db.models import (
     ChatFeedbackType,
+    ChatInputFile,
     ChatMessage,
     ChatMessageFeedback,
     ChatRole,
     ChatSession,
     ChatSessionShare,
+    DeptTime,
     User,
 )
 from app.core.config import get_settings
 from app.features.chat.services import chat_service
 from app.features.knowledge_bases.services import file_service
+from app.features.knowledge_bases.services.object_storage import get_storage_client
 from app.features.rag.services import document_parser, rag
 
 logger = logging.getLogger(__name__)
@@ -65,6 +69,7 @@ class MessageOut(BaseModel):
     content: str
     citations: list[dict[str, Any]] | None
     created_at: str
+    feedback: str | None = None
 
 
 class SessionDetail(SessionOut):
@@ -177,13 +182,20 @@ def _session_out(s: ChatSession) -> SessionOut:
     )
 
 
-def _message_out(m: ChatMessage) -> MessageOut:
+def _message_out(m: ChatMessage, *, owner_user_id: int | None = None) -> MessageOut:
+    feedback: str | None = None
+    if owner_user_id is not None:
+        for row in m.feedbacks:
+            if row.owner_user_id == owner_user_id:
+                feedback = row.feedback.value
+                break
     return MessageOut(
         id=m.id,
         role=m.role.value,
         content=m.content,
         citations=m.citations,
         created_at=m.created_at.isoformat(),
+        feedback=feedback,
     )
 
 
@@ -200,7 +212,9 @@ async def _load_owned_session(
         ChatSession.deleted_at.is_(None),
     )
     if with_messages:
-        stmt = stmt.options(selectinload(ChatSession.messages))
+        stmt = stmt.options(
+            selectinload(ChatSession.messages).selectinload(ChatMessage.feedbacks)
+        )
     s = await session.scalar(stmt)
     if s is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="session_not_found")
@@ -227,6 +241,7 @@ async def list_sessions(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> list[SessionOut]:
+    session.add(DeptTime(owner_user_id=user.id, dept="chat_sessions"))
     rows = await session.scalars(
         select(ChatSession)
         .where(
@@ -235,6 +250,7 @@ async def list_sessions(
         )
         .order_by(ChatSession.updated_at.desc())
     )
+    await session.commit()
     return [_session_out(s) for s in rows.all()]
 
 
@@ -252,7 +268,7 @@ async def get_session(
         title=s.title,
         created_at=s.created_at.isoformat(),
         updated_at=s.updated_at.isoformat(),
-        messages=[_message_out(m) for m in s.messages],
+        messages=[_message_out(m, owner_user_id=user.id) for m in s.messages],
     )
 
 
@@ -294,7 +310,9 @@ async def get_shared_session(
             ChatSessionShare.revoked_at.is_(None),
         )
         .options(
-            selectinload(ChatSessionShare.session).selectinload(ChatSession.messages)
+            selectinload(ChatSessionShare.session)
+                .selectinload(ChatSession.messages)
+                .selectinload(ChatMessage.feedbacks)
         )
     )
     if share is None or share.session is None or share.session.deleted_at is not None:
@@ -306,7 +324,7 @@ async def get_shared_session(
         title=s.title,
         created_at=s.created_at.isoformat(),
         updated_at=s.updated_at.isoformat(),
-        messages=[_message_out(m) for m in s.messages],
+        messages=[_message_out(m, owner_user_id=user.id) for m in s.messages],
     )
 
 
@@ -470,11 +488,20 @@ async def _parse_stream_request(request: Request) -> tuple[StreamRequest, list[A
     return body, []
 
 
-async def _attachment_context(uploads: list[Any]) -> str:
+async def _save_and_build_attachment_context(
+    uploads: list[Any],
+    *,
+    db_session: AsyncSession,
+    owner_user_id: int,
+    session_id: int,
+    message_id: int,
+) -> str:
     if not uploads:
         return ""
 
     settings = get_settings()
+    storage = get_storage_client()
+    await storage.ensure_bucket()
     blocks: list[str] = ["User-uploaded files for this chat turn:"]
     remaining_chars = CHAT_ATTACHMENT_CONTEXT_CHARS
 
@@ -482,23 +509,55 @@ async def _attachment_context(uploads: list[Any]) -> str:
         filename = upload.filename or f"attachment-{index}"
         try:
             extension = file_service.validate_extension(filename)
-            data, _sha256, size = await file_service.stream_into_buffer(
+            data, sha256, size = await file_service.stream_into_buffer(
                 upload, settings.max_upload_bytes
             )
             file_service.validate_content(extension, data[:1024])
-            segments = document_parser.parse(extension, data)
         except file_service.ValidationError as exc:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, detail=f"{filename}: {exc.code}"
             ) from exc
-        except Exception as exc:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, detail=f"{filename}: parse_failed"
-            ) from exc
+
+        storage_key = (
+            f"chat-input-files/{owner_user_id}/{session_id}/{message_id}/"
+            f"{index}-{sha256}.{extension}"
+        )
+        await storage.put_object(
+            storage_key,
+            io.BytesIO(data),
+            size,
+            getattr(upload, "content_type", None) or "application/octet-stream",
+        )
+        db_session.add(
+            ChatInputFile(
+                owner_user_id=owner_user_id,
+                session_id=session_id,
+                message_id=message_id,
+                filename=filename,
+                extension=extension,
+                size_bytes=size,
+                content_sha256=sha256,
+                storage_key=storage_key,
+            )
+        )
+
+        try:
+            segments = document_parser.parse(extension, data)
+        except Exception:
+            logger.exception(
+                "chat_attachment_parse_failed session=%s message=%s filename=%s",
+                session_id,
+                message_id,
+                filename,
+            )
+            blocks.append(
+                f"[Attachment {index}] {filename} ({size} bytes): saved, but text extraction failed"
+            )
+            continue
 
         if not segments:
             blocks.append(
-                f"[Attachment {index}] {filename} ({size} bytes): no extractable text"
+                f"[Attachment {index}] {filename} ({size} bytes): saved, but no extractable text"
             )
             continue
 
@@ -513,7 +572,7 @@ async def _attachment_context(uploads: list[Any]) -> str:
         text = "\n\n".join(parts).strip()
         if remaining_chars <= 0:
             blocks.append(
-                f"[Attachment {index}] {filename}: omitted because attachment context limit was reached"
+                f"[Attachment {index}] {filename}: saved, but omitted from context because attachment context limit was reached"
             )
             continue
         if len(text) > remaining_chars:
@@ -524,7 +583,7 @@ async def _attachment_context(uploads: list[Any]) -> str:
             remaining_chars = 0
         else:
             remaining_chars -= len(text)
-        blocks.append(f"[Attachment {index}] {filename}\n{text}")
+        blocks.append(f"[Attachment {index}] {filename} (saved)\n{text}")
 
     return "\n\n".join(blocks)
 
@@ -541,7 +600,6 @@ async def stream_chat(
     session: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     body, uploads = await _parse_stream_request(request)
-    attachment_context = await _attachment_context(uploads)
     # Load session + history + persist user message in the request session so
     # the streaming generator (which opens its own session) sees them.
     s = await _load_owned_session(
@@ -552,6 +610,14 @@ async def stream_chat(
         session_id=s.id, role=ChatRole.USER, content=body.message, citations=None
     )
     session.add(user_msg)
+    await session.flush()
+    attachment_context = await _save_and_build_attachment_context(
+        uploads,
+        db_session=session,
+        owner_user_id=user.id,
+        session_id=s.id,
+        message_id=user_msg.id,
+    )
     # Auto-title from first user message (within ~50 chars, single line).
     if not history:
         first_line = body.message.strip().splitlines()[0]

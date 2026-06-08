@@ -29,6 +29,23 @@ class User(Base):
     )
 
 
+class DeptTime(Base):
+    __tablename__ = "dept_times"
+
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("users.id"), nullable=False
+    )
+    dept: Mapped[str] = mapped_column(Text, nullable=False)
+    time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_dept_times_owner_time", "owner_user_id", "time"),
+    )
+
+
 class FileStatus(enum.Enum):
     UPLOADED = "uploaded"
     PARSING = "parsing"
@@ -177,6 +194,39 @@ class ChatMessage(Base):
     session: Mapped[ChatSession] = relationship(back_populates="messages")
     feedbacks: Mapped[list["ChatMessageFeedback"]] = relationship(
         back_populates="message"
+    )
+    input_files: Mapped[list["ChatInputFile"]] = relationship(
+        back_populates="message"
+    )
+
+
+class ChatInputFile(Base):
+    __tablename__ = "chat_input_files"
+
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("users.id"), nullable=False
+    )
+    session_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("chat_sessions.id"), nullable=False
+    )
+    message_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("chat_messages.id"), nullable=False
+    )
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    extension: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(ID_TYPE, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_key: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    message: Mapped[ChatMessage] = relationship(back_populates="input_files")
+
+    __table_args__ = (
+        Index("ix_chat_input_files_owner_created", "owner_user_id", "created_at"),
+        Index("ix_chat_input_files_session_message", "session_id", "message_id"),
     )
 
 

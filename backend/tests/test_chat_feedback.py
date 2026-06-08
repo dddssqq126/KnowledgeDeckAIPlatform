@@ -79,6 +79,37 @@ async def test_owner_can_upsert_assistant_message_feedback(
 
 
 @pytest.mark.asyncio
+async def test_session_detail_includes_existing_message_feedback(
+    http_client, db_session, alice: User
+) -> None:
+    chat = ChatSession(owner_user_id=alice.id, title="Feedback detail")
+    db_session.add(chat)
+    await db_session.flush()
+    message = ChatMessage(
+        session_id=chat.id,
+        role=ChatRole.ASSISTANT,
+        content="Already rated",
+        citations=None,
+    )
+    db_session.add(message)
+    await db_session.flush()
+    db_session.add(
+        ChatMessageFeedback(
+            message_id=message.id,
+            owner_user_id=alice.id,
+            feedback=ChatFeedbackType.LIKE,
+            content=message.content,
+        )
+    )
+    await db_session.commit()
+
+    res = await http_client.get(f"/chat/sessions/{chat.id}", headers=auth(alice))
+
+    assert res.status_code == 200
+    assert res.json()["messages"][0]["feedback"] == "like"
+
+
+@pytest.mark.asyncio
 async def test_other_user_cannot_feedback_private_message(
     http_client, db_session, alice: User, bob: User
 ) -> None:

@@ -55,13 +55,14 @@ export function ChatInput({
   function submit() {
     const trimmed = text.trim();
     if (disabled) return;
-    if (!trimmed) {
-      setValidationMessage("請記得輸入資料");
+    if (!trimmed && attachments.length === 0) {
+      setValidationMessage("請記得輸入資料或附加檔案");
       return;
     }
+    const message = trimmed || "請閱讀我附加的檔案內容並回答。";
     const kbIds = selectedKbIds.length === 0 ? null : selectedKbIds;
     const filesToSend = [...attachments];
-    onSend(trimmed, useRag, kbIds, useRag && deepMode, filesToSend);
+    onSend(message, useRag, kbIds, useRag && deepMode, filesToSend);
     setText("");
     setValidationMessage(null);
     setAttachments([]);

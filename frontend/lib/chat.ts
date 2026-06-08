@@ -30,6 +30,7 @@ export type ChatMessage = {
   content: string;
   citations: Citation[] | null;
   created_at: string;
+  feedback?: ChatFeedback | null;
 };
 
 export type SessionDetail = ChatSession & { messages: ChatMessage[] };
@@ -89,12 +90,22 @@ export async function searchChatSessions(q: string): Promise<ChatSearchResult[]>
 }
 
 
+export type MessageFeedbackResponse = {
+  message_id: number;
+  feedback: ChatFeedback;
+  content: string;
+  updated_at: string;
+};
 
 export async function sendMessageFeedback(
   messageId: number,
   feedback: ChatFeedback,
-): Promise<void> {
-  await api.post(`/chat/messages/${messageId}/feedback`, { feedback });
+): Promise<MessageFeedbackResponse> {
+  const res = await api.post<MessageFeedbackResponse>(
+    `/chat/messages/${messageId}/feedback`,
+    { feedback },
+  );
+  return res.data;
 }
 
 export type StreamRequest = {
@@ -190,36 +201,49 @@ export async function streamChat(
   const decoder = new TextDecoder();
   let buffer = "";
 
+  const processFrame = (frame: string) => {
+    let event = "";
+    const dataLines: string[] = [];
+    for (const rawLine of frame.split("\n")) {
+      const line = rawLine.replace(/\r$/, "");
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+    }
+    if (!event) return;
+    const data = dataLines.join("\n");
+    let parsed: any = {};
+    if (data) {
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        parsed = { raw: data };
+      }
+    }
+    if (event === "token") handlers.onToken(parsed.text ?? "");
+    else if (event === "citations") handlers.onCitations(parsed.items ?? []);
+    else if (event === "done") handlers.onDone(parsed);
+    else if (event === "error") handlers.onError(parsed.message ?? "stream error");
+  };
+
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
-    // SSE frames are separated by a blank line ("\n\n"). Process complete
-    // frames; keep the trailing partial frame in the buffer.
-    let sep: number;
-    while ((sep = buffer.indexOf("\n\n")) >= 0) {
+    // SSE frames are separated by a blank line. Accept both LF and CRLF and
+    // keep the trailing partial frame in the buffer.
+    let match = buffer.match(/\r?\n\r?\n/);
+    while (match?.index !== undefined) {
+      const sep = match.index;
       const frame = buffer.slice(0, sep);
-      buffer = buffer.slice(sep + 2);
-      let event = "";
-      let data = "";
-      for (const line of frame.split("\n")) {
-        if (line.startsWith("event:")) event = line.slice(6).trim();
-        else if (line.startsWith("data:")) data = line.slice(5).trim();
-      }
-      if (!event) continue;
-      let parsed: any = {};
-      if (data) {
-        try {
-          parsed = JSON.parse(data);
-        } catch {
-          parsed = { raw: data };
-        }
-      }
-      if (event === "token") handlers.onToken(parsed.text ?? "");
-      else if (event === "citations") handlers.onCitations(parsed.items ?? []);
-      else if (event === "done") handlers.onDone(parsed);
-      else if (event === "error") handlers.onError(parsed.message ?? "stream error");
+      buffer = buffer.slice(sep + match[0].length);
+      processFrame(frame);
+      match = buffer.match(/\r?\n\r?\n/);
     }
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    processFrame(buffer);
   }
 }
 
