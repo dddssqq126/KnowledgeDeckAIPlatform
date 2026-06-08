@@ -55,8 +55,8 @@ export function ChatInput({
   function submit() {
     const trimmed = text.trim();
     if (disabled) return;
-    if (!trimmed) {
-      setValidationMessage("請記得輸入資料");
+    if (!trimmed && attachments.length === 0) {
+      setValidationMessage("請輸入訊息或附加檔案");
       return;
     }
     const kbIds = selectedKbIds.length === 0 ? null : selectedKbIds;
@@ -77,6 +77,7 @@ export function ChatInput({
   function addAttachments(files: FileList | null) {
     if (!files?.length) return;
     setAttachments((current) => [...current, ...Array.from(files)]);
+    if (validationMessage) setValidationMessage(null);
   }
 
   function removeAttachment(index: number) {
@@ -84,13 +85,13 @@ export function ChatInput({
   }
 
   const allSelected =
-    knowledgeBases.length > 0 &&
-    selectedKbIds.length === knowledgeBases.length;
+    knowledgeBases.length > 0 && selectedKbIds.length === knowledgeBases.length;
   const kbLabel =
     selectedKbIds.length === 0 || allSelected
       ? "All KBs"
       : selectedKbIds.length === 1
-        ? knowledgeBases.find((k) => k.id === selectedKbIds[0])?.name ?? "1 KB"
+        ? (knowledgeBases.find((k) => k.id === selectedKbIds[0])?.name ??
+          "1 KB")
         : `${selectedKbIds.length} KBs`;
 
   return (
