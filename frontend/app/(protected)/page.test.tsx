@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import ChatPage from "./page";
-import { getSession, sendMessageFeedback, shareChatSession, streamChat } from "../../lib/chat";
+import { downloadChatInputFile, getSession, sendMessageFeedback, shareChatSession, streamChat } from "../../lib/chat";
 
 const chatInputMockState = vi.hoisted(() => ({ deepMode: false }));
 
@@ -64,6 +64,7 @@ vi.mock("../../lib/llm-info", () => ({
 }));
 
 vi.mock("../../lib/chat", () => ({
+  downloadChatInputFile: vi.fn(),
   getSession: vi.fn(),
   sendMessageFeedback: vi.fn(),
   shareChatSession: vi.fn(),
@@ -149,6 +150,46 @@ describe("ChatPage", () => {
     expect(screen.queryByText("#ran")).not.toBeInTheDocument();
   });
 
+
+  it("shows historical chat input files and downloads them", async () => {
+    vi.mocked(getSession).mockResolvedValueOnce({
+      id: 1,
+      title: "RAG onboarding checklist",
+      created_at: "2026-05-06T00:00:00Z",
+      updated_at: "2026-05-06T01:00:00Z",
+      messages: [
+        {
+          id: 31,
+          role: "user",
+          content: "Please read this",
+          citations: null,
+          created_at: "2026-05-06T00:09:00Z",
+          input_files: [
+            {
+              id: 44,
+              filename: "input.pdf",
+              extension: "pdf",
+              size_bytes: 1234,
+              created_at: "2026-05-06T00:09:01Z",
+            },
+          ],
+        },
+      ],
+    });
+    vi.mocked(downloadChatInputFile).mockResolvedValueOnce(undefined);
+
+    render(<ChatPage />);
+
+    expect(await screen.findByText("input.pdf")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Download input file input.pdf" }),
+    );
+
+    await waitFor(() => {
+      expect(downloadChatInputFile).toHaveBeenCalledWith(44, "input.pdf");
+    });
+  });
+
   it("sends deep mode in the stream request when deepmmode is checked", async () => {
     vi.mocked(streamChat).mockResolvedValueOnce(undefined);
     render(<ChatPage />);
@@ -172,7 +213,19 @@ describe("ChatPage", () => {
   });
 
   it("records like and dislike feedback for assistant messages", async () => {
-    vi.mocked(sendMessageFeedback).mockResolvedValue(undefined);
+    vi.mocked(sendMessageFeedback)
+      .mockResolvedValueOnce({
+        message_id: 21,
+        feedback: "like",
+        content: "Exportable answer",
+        updated_at: "2026-05-06T00:11:00Z",
+      })
+      .mockResolvedValueOnce({
+        message_id: 21,
+        feedback: "dislike",
+        content: "Exportable answer",
+        updated_at: "2026-05-06T00:12:00Z",
+      });
     render(<ChatPage />);
 
     await screen.findByText("Exportable answer");
@@ -187,5 +240,80 @@ describe("ChatPage", () => {
     await waitFor(() => {
       expect(sendMessageFeedback).toHaveBeenCalledWith(21, "dislike");
     });
+  });
+
+  it("shows feedback actions immediately after a streamed assistant message is done", async () => {
+    vi.mocked(getSession)
+      .mockResolvedValueOnce({
+        id: 1,
+        title: "RAG onboarding checklist",
+        created_at: "2026-05-06T00:00:00Z",
+        updated_at: "2026-05-06T01:00:00Z",
+        messages: [
+          {
+            id: 21,
+            role: "assistant",
+            content: "Exportable answer",
+            citations: null,
+            created_at: "2026-05-06T00:10:00Z",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        id: 1,
+        title: "RAG onboarding checklist",
+        created_at: "2026-05-06T00:00:00Z",
+        updated_at: "2026-05-06T01:00:00Z",
+        messages: [
+          {
+            id: 21,
+            role: "assistant",
+            content: "Exportable answer",
+            citations: null,
+            created_at: "2026-05-06T00:10:00Z",
+          },
+          {
+            id: 99,
+            role: "assistant",
+            content: "Streamed answer",
+            citations: null,
+            created_at: "2026-05-06T00:11:00Z",
+          },
+        ],
+      });
+    vi.mocked(streamChat).mockImplementationOnce(async (_request, handlers) => {
+      handlers.onToken("Streamed answer");
+      handlers.onDone({ message_id: 99, feedback_message_id: 99 });
+    });
+    render(<ChatPage />);
+
+    await screen.findByText("Exportable answer");
+    fireEvent.click(screen.getByRole("button", { name: "Send test message" }));
+
+    expect(await screen.findByText("Streamed answer")).toBeInTheDocument();
+    const likeButtons = screen.getAllByRole("button", { name: "Like response" });
+    expect(likeButtons).toHaveLength(2);
+
+    vi.mocked(sendMessageFeedback).mockResolvedValueOnce({
+      message_id: 99,
+      feedback: "like",
+      content: "Streamed answer",
+      updated_at: "2026-05-06T00:12:00Z",
+    });
+    fireEvent.click(likeButtons[1]);
+
+    await waitFor(() => {
+      expect(sendMessageFeedback).toHaveBeenCalledWith(99, "like");
+    });
+  });
+
+  it("shows a feedback error instead of silently failing", async () => {
+    vi.mocked(sendMessageFeedback).mockRejectedValueOnce(new Error("feedback failed"));
+    render(<ChatPage />);
+
+    await screen.findByText("Exportable answer");
+    fireEvent.click(screen.getByRole("button", { name: "Like response" }));
+
+    expect(await screen.findByText("Feedback error: feedback failed")).toBeInTheDocument();
   });
 });

@@ -2,6 +2,7 @@
 
 import { api } from "./api";
 import { useAuthStore } from "./auth-store";
+import { downloadBlob, safeFilename } from "./download";
 import { mockAppendChatTurn, mockGetSharedSession, mockShareSession } from "./mock-data";
 import { isMockDataMode } from "./mock-mode";
 
@@ -24,12 +25,22 @@ export type ChatSession = {
 
 export type ChatFeedback = "like" | "dislike";
 
+export type ChatInputFile = {
+  id: number;
+  filename: string;
+  extension: string;
+  size_bytes: number;
+  created_at: string;
+};
+
 export type ChatMessage = {
   id: number;
   role: "user" | "assistant";
   content: string;
   citations: Citation[] | null;
   created_at: string;
+  feedback?: ChatFeedback | null;
+  input_files?: ChatInputFile[];
 };
 
 export type SessionDetail = ChatSession & { messages: ChatMessage[] };
@@ -89,12 +100,45 @@ export async function searchChatSessions(q: string): Promise<ChatSearchResult[]>
 }
 
 
+export type MessageFeedbackResponse = {
+  message_id: number;
+  feedback: ChatFeedback;
+  content: string;
+  updated_at: string;
+};
 
 export async function sendMessageFeedback(
   messageId: number,
   feedback: ChatFeedback,
+): Promise<MessageFeedbackResponse> {
+  const res = await api.post<MessageFeedbackResponse>(
+    `/chat/messages/${messageId}/feedback`,
+    { feedback },
+  );
+  return res.data;
+}
+
+export async function downloadChatInputFile(
+  fileId: number,
+  fallbackFilename: string,
 ): Promise<void> {
-  await api.post(`/chat/messages/${messageId}/feedback`, { feedback });
+  const res = await api.get<Blob>(`/chat/input-files/${fileId}/download`, {
+    responseType: "blob",
+  });
+  const filename =
+    filenameFromContentDisposition(res.headers["content-disposition"]) ??
+    safeFilename(fallbackFilename, `chat-input-${fileId}`);
+  downloadBlob(res.data, filename);
+}
+
+function filenameFromContentDisposition(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(value);
+  if (utf8?.[1]) return safeFilename(decodeURIComponent(utf8[1]));
+  const quoted = /filename="([^"]+)"/i.exec(value);
+  if (quoted?.[1]) return safeFilename(quoted[1]);
+  const bare = /filename=([^;]+)/i.exec(value);
+  return bare?.[1] ? safeFilename(bare[1]) : null;
 }
 
 export type StreamRequest = {
@@ -109,7 +153,7 @@ export type StreamRequest = {
 export type StreamHandlers = {
   onToken: (text: string) => void;
   onCitations: (items: Citation[]) => void;
-  onDone: (data?: { message_id?: number }) => void;
+  onDone: (data?: { message_id?: number; feedback_message_id?: number }) => void;
   onError: (message: string) => void;
 };
 
@@ -190,36 +234,49 @@ export async function streamChat(
   const decoder = new TextDecoder();
   let buffer = "";
 
+  const processFrame = (frame: string) => {
+    let event = "";
+    const dataLines: string[] = [];
+    for (const rawLine of frame.split("\n")) {
+      const line = rawLine.replace(/\r$/, "");
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+    }
+    if (!event) return;
+    const data = dataLines.join("\n");
+    let parsed: any = {};
+    if (data) {
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        parsed = { raw: data };
+      }
+    }
+    if (event === "token") handlers.onToken(parsed.text ?? "");
+    else if (event === "citations") handlers.onCitations(parsed.items ?? []);
+    else if (event === "done") handlers.onDone(parsed);
+    else if (event === "error") handlers.onError(parsed.message ?? "stream error");
+  };
+
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
-    // SSE frames are separated by a blank line ("\n\n"). Process complete
-    // frames; keep the trailing partial frame in the buffer.
-    let sep: number;
-    while ((sep = buffer.indexOf("\n\n")) >= 0) {
+    // SSE frames are separated by a blank line. Accept both LF and CRLF and
+    // keep the trailing partial frame in the buffer.
+    let match = buffer.match(/\r?\n\r?\n/);
+    while (match?.index !== undefined) {
+      const sep = match.index;
       const frame = buffer.slice(0, sep);
-      buffer = buffer.slice(sep + 2);
-      let event = "";
-      let data = "";
-      for (const line of frame.split("\n")) {
-        if (line.startsWith("event:")) event = line.slice(6).trim();
-        else if (line.startsWith("data:")) data = line.slice(5).trim();
-      }
-      if (!event) continue;
-      let parsed: any = {};
-      if (data) {
-        try {
-          parsed = JSON.parse(data);
-        } catch {
-          parsed = { raw: data };
-        }
-      }
-      if (event === "token") handlers.onToken(parsed.text ?? "");
-      else if (event === "citations") handlers.onCitations(parsed.items ?? []);
-      else if (event === "done") handlers.onDone(parsed);
-      else if (event === "error") handlers.onError(parsed.message ?? "stream error");
+      buffer = buffer.slice(sep + match[0].length);
+      processFrame(frame);
+      match = buffer.match(/\r?\n\r?\n/);
     }
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    processFrame(buffer);
   }
 }
 
@@ -228,7 +285,7 @@ async function mockStreamChat(
   handlers: StreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
-  const { answer, citations } = mockAppendChatTurn(
+  const { answer, citations, assistantMessageId } = mockAppendChatTurn(
     req.session_id,
     req.message,
     req.use_rag,
@@ -243,7 +300,10 @@ async function mockStreamChat(
     handlers.onToken(token);
     await wait(22);
   }
-  handlers.onDone();
+  handlers.onDone({
+    message_id: assistantMessageId,
+    feedback_message_id: assistantMessageId,
+  });
 }
 
 function chunkText(text: string): string[] {

@@ -7,6 +7,7 @@ dependency. Sessions are user-scoped — cross-user access returns 404.
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import secrets
@@ -15,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,16 +26,19 @@ from app.shared.api.deps import get_current_user
 from app.db.base import async_session_factory, get_db
 from app.db.models import (
     ChatFeedbackType,
+    ChatInputFile,
     ChatMessage,
     ChatMessageFeedback,
     ChatRole,
     ChatSession,
     ChatSessionShare,
+    DeptTime,
     User,
 )
 from app.core.config import get_settings
 from app.features.chat.services import chat_service
 from app.features.knowledge_bases.services import file_service
+from app.features.knowledge_bases.services.object_storage import get_storage_client
 from app.features.rag.services import document_parser, rag
 
 logger = logging.getLogger(__name__)
@@ -59,12 +63,22 @@ class SessionOut(BaseModel):
     updated_at: str
 
 
+class ChatInputFileOut(BaseModel):
+    id: int
+    filename: str
+    extension: str
+    size_bytes: int
+    created_at: str
+
+
 class MessageOut(BaseModel):
     id: int
     role: str
     content: str
     citations: list[dict[str, Any]] | None
     created_at: str
+    feedback: str | None = None
+    input_files: list[ChatInputFileOut] = Field(default_factory=list)
 
 
 class SessionDetail(SessionOut):
@@ -177,13 +191,30 @@ def _session_out(s: ChatSession) -> SessionOut:
     )
 
 
-def _message_out(m: ChatMessage) -> MessageOut:
+def _message_out(m: ChatMessage, *, owner_user_id: int | None = None) -> MessageOut:
+    feedback: str | None = None
+    if owner_user_id is not None:
+        for row in m.feedbacks:
+            if row.owner_user_id == owner_user_id:
+                feedback = row.feedback.value
+                break
     return MessageOut(
         id=m.id,
         role=m.role.value,
         content=m.content,
         citations=m.citations,
         created_at=m.created_at.isoformat(),
+        feedback=feedback,
+        input_files=[
+            ChatInputFileOut(
+                id=f.id,
+                filename=f.filename,
+                extension=f.extension,
+                size_bytes=f.size_bytes,
+                created_at=f.created_at.isoformat(),
+            )
+            for f in m.input_files
+        ],
     )
 
 
@@ -200,7 +231,10 @@ async def _load_owned_session(
         ChatSession.deleted_at.is_(None),
     )
     if with_messages:
-        stmt = stmt.options(selectinload(ChatSession.messages))
+        stmt = stmt.options(
+            selectinload(ChatSession.messages).selectinload(ChatMessage.feedbacks),
+            selectinload(ChatSession.messages).selectinload(ChatMessage.input_files),
+        )
     s = await session.scalar(stmt)
     if s is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="session_not_found")
@@ -227,6 +261,7 @@ async def list_sessions(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> list[SessionOut]:
+    session.add(DeptTime(owner_user_id=user.id, dept="chat_sessions"))
     rows = await session.scalars(
         select(ChatSession)
         .where(
@@ -235,6 +270,7 @@ async def list_sessions(
         )
         .order_by(ChatSession.updated_at.desc())
     )
+    await session.commit()
     return [_session_out(s) for s in rows.all()]
 
 
@@ -252,7 +288,7 @@ async def get_session(
         title=s.title,
         created_at=s.created_at.isoformat(),
         updated_at=s.updated_at.isoformat(),
-        messages=[_message_out(m) for m in s.messages],
+        messages=[_message_out(m, owner_user_id=user.id) for m in s.messages],
     )
 
 
@@ -294,7 +330,12 @@ async def get_shared_session(
             ChatSessionShare.revoked_at.is_(None),
         )
         .options(
-            selectinload(ChatSessionShare.session).selectinload(ChatSession.messages)
+            selectinload(ChatSessionShare.session)
+                .selectinload(ChatSession.messages)
+                .selectinload(ChatMessage.feedbacks),
+            selectinload(ChatSessionShare.session)
+                .selectinload(ChatSession.messages)
+                .selectinload(ChatMessage.input_files),
         )
     )
     if share is None or share.session is None or share.session.deleted_at is not None:
@@ -306,8 +347,41 @@ async def get_shared_session(
         title=s.title,
         created_at=s.created_at.isoformat(),
         updated_at=s.updated_at.isoformat(),
-        messages=[_message_out(m) for m in s.messages],
+        messages=[_message_out(m, owner_user_id=user.id) for m in s.messages],
     )
+
+
+def _content_type_for(extension: str) -> str:
+    mapping = {
+        "pdf": "application/pdf",
+        "txt": "text/plain; charset=utf-8",
+        "cs": "text/x-csharp; charset=utf-8",
+        "md": "text/markdown; charset=utf-8",
+        "py": "text/x-python; charset=utf-8",
+        "html": "text/html; charset=utf-8",
+        "css": "text/css; charset=utf-8",
+        "csv": "text/csv; charset=utf-8",
+        "tsv": "text/tab-separated-values; charset=utf-8",
+        "docx": (
+            "application/vnd.openxmlformats-officedocument." "wordprocessingml.document"
+        ),
+        "pptx": (
+            "application/vnd.openxmlformats-officedocument."
+            "presentationml.presentation"
+        ),
+        "xlsx": (
+            "application/vnd.openxmlformats-officedocument." "spreadsheetml.sheet"
+        ),
+    }
+    return mapping.get(extension, "application/octet-stream")
+
+
+def _attachment_headers(filename: str, size_bytes: int) -> dict[str, str]:
+    safe_filename = filename.replace("\\", "_").replace("/", "_").replace('"', "'")
+    return {
+        "Content-Disposition": f'attachment; filename="{safe_filename}"',
+        "Content-Length": str(size_bytes),
+    }
 
 
 @router.patch("/sessions/{session_id}", response_model=SessionOut)
@@ -372,6 +446,38 @@ async def upsert_message_feedback(
         feedback=row.feedback.value,
         content=row.content,
         updated_at=row.updated_at.isoformat(),
+    )
+
+
+@router.get("/input-files/{file_id}/download")
+async def download_input_file(
+    file_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    row = await session.scalar(
+        select(ChatInputFile)
+        .join(ChatSession, ChatSession.id == ChatInputFile.session_id)
+        .where(
+            ChatInputFile.id == file_id,
+            ChatInputFile.owner_user_id == user.id,
+            ChatSession.deleted_at.is_(None),
+        )
+    )
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="input_file_not_found")
+
+    try:
+        data = await get_storage_client().get_object(row.storage_key)
+    except Exception:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, detail="storage_error"
+        )
+
+    return Response(
+        content=data,
+        media_type=_content_type_for(row.extension),
+        headers=_attachment_headers(row.filename, len(data)),
     )
 
 
@@ -470,11 +576,20 @@ async def _parse_stream_request(request: Request) -> tuple[StreamRequest, list[A
     return body, []
 
 
-async def _attachment_context(uploads: list[Any]) -> str:
+async def _save_and_build_attachment_context(
+    uploads: list[Any],
+    *,
+    db_session: AsyncSession,
+    owner_user_id: int,
+    session_id: int,
+    message_id: int,
+) -> str:
     if not uploads:
         return ""
 
     settings = get_settings()
+    storage = get_storage_client()
+    await storage.ensure_bucket()
     blocks: list[str] = ["User-uploaded files for this chat turn:"]
     remaining_chars = CHAT_ATTACHMENT_CONTEXT_CHARS
 
@@ -482,23 +597,55 @@ async def _attachment_context(uploads: list[Any]) -> str:
         filename = upload.filename or f"attachment-{index}"
         try:
             extension = file_service.validate_extension(filename)
-            data, _sha256, size = await file_service.stream_into_buffer(
+            data, sha256, size = await file_service.stream_into_buffer(
                 upload, settings.max_upload_bytes
             )
             file_service.validate_content(extension, data[:1024])
-            segments = document_parser.parse(extension, data)
         except file_service.ValidationError as exc:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, detail=f"{filename}: {exc.code}"
             ) from exc
-        except Exception as exc:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, detail=f"{filename}: parse_failed"
-            ) from exc
+
+        storage_key = (
+            f"chat-input-files/{owner_user_id}/{session_id}/{message_id}/"
+            f"{index}-{sha256}.{extension}"
+        )
+        await storage.put_object(
+            storage_key,
+            io.BytesIO(data),
+            size,
+            getattr(upload, "content_type", None) or "application/octet-stream",
+        )
+        db_session.add(
+            ChatInputFile(
+                owner_user_id=owner_user_id,
+                session_id=session_id,
+                message_id=message_id,
+                filename=filename,
+                extension=extension,
+                size_bytes=size,
+                content_sha256=sha256,
+                storage_key=storage_key,
+            )
+        )
+
+        try:
+            segments = document_parser.parse(extension, data)
+        except Exception:
+            logger.exception(
+                "chat_attachment_parse_failed session=%s message=%s filename=%s",
+                session_id,
+                message_id,
+                filename,
+            )
+            blocks.append(
+                f"[Attachment {index}] {filename} ({size} bytes): saved, but text extraction failed"
+            )
+            continue
 
         if not segments:
             blocks.append(
-                f"[Attachment {index}] {filename} ({size} bytes): no extractable text"
+                f"[Attachment {index}] {filename} ({size} bytes): saved, but no extractable text"
             )
             continue
 
@@ -513,7 +660,7 @@ async def _attachment_context(uploads: list[Any]) -> str:
         text = "\n\n".join(parts).strip()
         if remaining_chars <= 0:
             blocks.append(
-                f"[Attachment {index}] {filename}: omitted because attachment context limit was reached"
+                f"[Attachment {index}] {filename}: saved, but omitted from context because attachment context limit was reached"
             )
             continue
         if len(text) > remaining_chars:
@@ -524,7 +671,7 @@ async def _attachment_context(uploads: list[Any]) -> str:
             remaining_chars = 0
         else:
             remaining_chars -= len(text)
-        blocks.append(f"[Attachment {index}] {filename}\n{text}")
+        blocks.append(f"[Attachment {index}] {filename} (saved)\n{text}")
 
     return "\n\n".join(blocks)
 
@@ -541,7 +688,6 @@ async def stream_chat(
     session: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     body, uploads = await _parse_stream_request(request)
-    attachment_context = await _attachment_context(uploads)
     # Load session + history + persist user message in the request session so
     # the streaming generator (which opens its own session) sees them.
     s = await _load_owned_session(
@@ -552,6 +698,14 @@ async def stream_chat(
         session_id=s.id, role=ChatRole.USER, content=body.message, citations=None
     )
     session.add(user_msg)
+    await session.flush()
+    attachment_context = await _save_and_build_attachment_context(
+        uploads,
+        db_session=session,
+        owner_user_id=user.id,
+        session_id=s.id,
+        message_id=user_msg.id,
+    )
     # Auto-title from first user message (within ~50 chars, single line).
     if not history:
         first_line = body.message.strip().splitlines()[0]
@@ -661,7 +815,13 @@ async def stream_chat(
                 await save_session.commit()
 
             yield _sse("citations", {"items": citations})
-            yield _sse("done", {"message_id": assistant_message_id})
+            yield _sse(
+                "done",
+                {
+                    "message_id": assistant_message_id,
+                    "feedback_message_id": assistant_message_id,
+                },
+            )
         except Exception as exc:  # pragma: no cover - prototype
             logger.exception("chat_stream_failed session=%s", session_id)
             yield _sse("error", {"message": str(exc)[:300]})

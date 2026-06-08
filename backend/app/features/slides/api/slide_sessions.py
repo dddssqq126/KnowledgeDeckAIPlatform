@@ -24,7 +24,14 @@ from sqlalchemy.orm import selectinload
 
 from app.shared.api.deps import get_current_user
 from app.db.base import async_session_factory, get_db
-from app.db.models import SlideMessage, SlideRole, SlideSession, SlideStatus, User
+from app.db.models import (
+    DeptTime,
+    SlideMessage,
+    SlideRole,
+    SlideSession,
+    SlideStatus,
+    User,
+)
 from app.features.slides.services import slide_chat_service
 from app.features.knowledge_bases.services.object_storage import get_storage_client
 from app.features.slides.services.presenton_client import PresentonError, get_presenton_client
@@ -202,6 +209,7 @@ async def list_sessions(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> list[SessionOut]:
+    session.add(DeptTime(owner_user_id=user.id, dept="slide_sessions"))
     rows = await session.scalars(
         select(SlideSession)
         .where(
@@ -210,6 +218,7 @@ async def list_sessions(
         )
         .order_by(SlideSession.updated_at.desc())
     )
+    await session.commit()
     return [_session_out(s) for s in rows.all()]
 
 
