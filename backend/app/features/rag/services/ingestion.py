@@ -30,6 +30,31 @@ from app.features.rag.services.model_clients import EmbeddingClient
 logger = logging.getLogger(__name__)
 
 
+def _trim_embedding_query(text: str, *, max_chars: int) -> str:
+    """Keep a single retrieval query within the embedding context budget.
+
+    File ingestion is already chunked before embedding, but chat retrieval embeds
+    the user query as one item. Users often paste long source files into the
+    chat box; embedding that verbatim can exceed bge-m3/vLLM's 8K-token limit.
+    Preserve both the start and end because code questions commonly put the
+    task at the top and the relevant error/stack trace at the bottom.
+    """
+    text = text.strip()
+    max_chars = max(1, max_chars)
+    # Fast path for normal short prompts: no truncation marker is allocated and
+    # the text sent to the embedding model remains exactly the stripped input.
+    if len(text) <= max_chars:
+        return text
+
+    marker = "\n...[truncated before embedding due to query length]...\n"
+    if max_chars <= len(marker):
+        return text[:max_chars]
+
+    head_chars = (max_chars - len(marker)) // 2
+    tail_chars = max_chars - len(marker) - head_chars
+    return f"{text[:head_chars].rstrip()}{marker}{text[-tail_chars:].lstrip()}"
+
+
 def _build_embedding_client() -> EmbeddingClient:
     s = get_settings()
     return EmbeddingClient(
@@ -214,5 +239,15 @@ async def cleanup_file_vectors(*, file_id: int) -> None:
 
 # Convenience for chat-side: embed a single query into a vector.
 async def embed_query(text: str) -> list[float]:
-    vectors = await _embed([text])
+    s = get_settings()
+    safe_text = _trim_embedding_query(
+        text, max_chars=s.embedding_query_max_chars
+    )
+    if safe_text != text.strip():
+        logger.warning(
+            "embedding_query_truncated original_chars=%s sent_chars=%s",
+            len(text),
+            len(safe_text),
+        )
+    vectors = await _embed([safe_text])
     return vectors[0]

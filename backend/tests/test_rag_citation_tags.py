@@ -26,6 +26,88 @@ def test_rerank_passage_includes_metadata() -> None:
     assert passage.endswith("link training details")
 
 
+def test_rerank_passage_truncates_oversized_payload(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    monkeypatch.setattr(
+        rag,
+        "get_settings",
+        lambda: Settings(rag_rerank_passage_max_chars=200),
+    )
+
+    passage = rag._rerank_passage(
+        {
+            "payload": {
+                "filename": "large-code.cs",
+                "text": "HEAD" + ("x" * 500) + "TAIL",
+                "vendor": "unknown",
+                "platform": "unknown",
+                "knowledge_type": "code",
+                "doc_type": "source",
+            }
+        }
+    )
+
+    assert len(passage) == 200
+    assert "filename: large-code.cs" in passage
+    assert "HEAD" in passage
+    assert passage.endswith("TAIL")
+    assert "truncated for reranker context limit" in passage
+
+
+def test_rerank_batches_respect_total_character_budget() -> None:
+    batches = rag._rerank_batches(
+        "query",
+        ["a" * 5, "b" * 5, "c" * 5],
+        max_chars=20,
+    )
+
+    assert batches == [[(0, "a" * 5), (1, "b" * 5)], [(2, "c" * 5)]]
+
+
+@pytest.mark.asyncio
+async def test_rank_hits_trims_query_and_batches_passages(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    monkeypatch.setattr(
+        rag,
+        "get_settings",
+        lambda: Settings(
+            rag_rerank_query_max_chars=50,
+            rag_rerank_passage_max_chars=60,
+            rag_rerank_batch_max_chars=120,
+        ),
+    )
+
+    calls: list[tuple[str, list[str]]] = []
+
+    class _FakeReranker:
+        async def score(self, query, passages):
+            calls.append((query, list(passages)))
+            return [(i, float(len(calls) * 10 + i)) for i, _ in enumerate(passages)]
+
+    hits = [
+        {
+            "score": 0.1,
+            "payload": {
+                "filename": f"{i}.txt",
+                "text": "HEAD" + (str(i) * 200) + "TAIL",
+            },
+        }
+        for i in range(3)
+    ]
+
+    monkeypatch.setattr(rag, "_build_reranker", lambda: _FakeReranker())
+
+    ranked = await rag._rank_hits("Q" * 200, hits)
+
+    assert len(calls) == 3
+    assert all(len(query) == 50 for query, _ in calls)
+    assert all(len(passage) <= 60 for _, passages in calls for passage in passages)
+    assert sorted(index for index, _ in ranked) == [0, 1, 2]
+    assert ranked[0][1] > ranked[-1][1]
+
+
 def test_select_final_hits_limits_repeated_files(monkeypatch) -> None:
     from app.core.config import Settings
 

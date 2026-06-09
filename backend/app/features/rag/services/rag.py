@@ -33,6 +33,26 @@ from app.features.rag.services.model_clients import RerankClient
 
 logger = logging.getLogger(__name__)
 
+_TRUNCATION_MARKER = "\n...[truncated for reranker context limit]...\n"
+
+
+def _trim_text_window(text: str, *, max_chars: int) -> str:
+    """Trim long model inputs while preserving the beginning and end."""
+    text = text.strip()
+    max_chars = max(1, max_chars)
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= len(_TRUNCATION_MARKER):
+        return text[:max_chars]
+
+    head_chars = (max_chars - len(_TRUNCATION_MARKER)) // 2
+    tail_chars = max_chars - len(_TRUNCATION_MARKER) - head_chars
+    return (
+        f"{text[:head_chars].rstrip()}"
+        f"{_TRUNCATION_MARKER}"
+        f"{text[-tail_chars:].lstrip()}"
+    )
+
 
 @dataclass(frozen=True)
 class CoverageJudgment:
@@ -125,6 +145,7 @@ def _build_coverage_judge() -> ChatOpenAI:
 
 def _rerank_passage(hit: dict[str, Any]) -> str:
     """Include metadata in reranker input so tag/file matches affect ranking."""
+    s = get_settings()
     payload = hit["payload"]
     topics = payload.get("tags_topic") or []
     metadata_parts = [
@@ -136,7 +157,18 @@ def _rerank_passage(hit: dict[str, Any]) -> str:
     ]
     if topics:
         metadata_parts.append("topics: " + ", ".join(topics))
-    return " | ".join(metadata_parts) + "\n" + str(payload.get("text") or "")
+
+    metadata = " | ".join(metadata_parts)
+    text = str(payload.get("text") or "")
+    passage = f"{metadata}\n{text}"
+    max_chars = max(1, s.rag_rerank_passage_max_chars)
+    if len(passage) <= max_chars:
+        return passage
+
+    remaining_text_chars = max_chars - len(metadata) - 1
+    if remaining_text_chars <= 0:
+        return metadata[:max_chars]
+    return f"{metadata}\n{_trim_text_window(text, max_chars=remaining_text_chars)}"
 
 
 def _query_tag_value(query_tags: Any | None, field: str) -> str:
@@ -292,13 +324,51 @@ async def _search_candidates(
     )
 
 
+def _rerank_batches(
+    query: str, passages: list[str], *, max_chars: int
+) -> list[list[tuple[int, str]]]:
+    """Split reranker passages so one /score request stays bounded."""
+    batches: list[list[tuple[int, str]]] = []
+    current: list[tuple[int, str]] = []
+    current_chars = 0
+    max_chars = max(1, max_chars)
+
+    for index, passage in enumerate(passages):
+        item_chars = len(query) + len(passage)
+        if current and current_chars + item_chars > max_chars:
+            batches.append(current)
+            current = []
+            current_chars = 0
+        current.append((index, passage))
+        current_chars += item_chars
+
+    if current:
+        batches.append(current)
+    return batches
+
+
 async def _rank_hits(query: str, hits: list[dict[str, Any]]) -> list[tuple[int, float]]:
+    s = get_settings()
+    safe_query = _trim_text_window(query, max_chars=s.rag_rerank_query_max_chars)
     passages = [_rerank_passage(h) for h in hits]
+    batches = _rerank_batches(
+        safe_query, passages, max_chars=s.rag_rerank_batch_max_chars
+    )
+    reranker = _build_reranker()
+    ranked: list[tuple[int, float]] = []
     try:
-        return await _build_reranker().score(query, passages)
+        for batch in batches:
+            local_passages = [passage for _, passage in batch]
+            local_to_original = [index for index, _ in batch]
+            for local_idx, score in await reranker.score(safe_query, local_passages):
+                if 0 <= local_idx < len(local_to_original):
+                    ranked.append((local_to_original[local_idx], score))
     except Exception:
         logger.exception("rerank_failed; falling back to dense order")
         return [(i, hits[i]["score"]) for i in range(len(hits))]
+
+    ranked.sort(key=lambda item: item[1], reverse=True)
+    return ranked
 
 
 def _result_from_final_hits(
@@ -510,14 +580,9 @@ async def retrieve_context(
     if not dense_hits:
         return "", []
 
-    # If the reranker is down, fall back to dense order so retrieval
+    # If the reranker is down, _rank_hits falls back to dense order so retrieval
     # doesn't break the request — log loudly and continue.
-    passages = [_rerank_passage(h) for h in dense_hits]
-    try:
-        ranked = await _build_reranker().score(query, passages)
-    except Exception:
-        logger.exception("rerank_failed; falling back to dense order")
-        ranked = [(i, dense_hits[i]["score"]) for i in range(len(dense_hits))]
+    ranked = await _rank_hits(query, dense_hits)
 
     final_hits = _select_final_hits(
         dense_hits,
