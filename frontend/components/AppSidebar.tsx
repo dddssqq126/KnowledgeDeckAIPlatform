@@ -13,6 +13,7 @@ import {
   Settings,
   Sparkles,
   Sun,
+  TableProperties,
   Upload,
 } from "lucide-react";
 import Link from "next/link";
@@ -46,6 +47,7 @@ export function AppSidebar() {
   const onKb = pathname.startsWith("/knowledge-bases");
   const onSlides = pathname.startsWith("/slides");
   const onRagDatabases = pathname.startsWith("/rag-databases");
+  const onAdminDatabase = pathname.startsWith("/admin-database");
   const onPresenton = pathname.startsWith("/presenton");
 
   return (
@@ -70,6 +72,9 @@ export function AppSidebar() {
         </NavLink>
         <NavLink href="/rag-databases" active={onRagDatabases} icon={Database}>
           RAG Databases
+        </NavLink>
+        <NavLink href="/admin-database" active={onAdminDatabase} icon={TableProperties}>
+          Database Admin
         </NavLink>
         <NavLink href="/" active={onChat} icon={MessageSquare}>
           Chat
