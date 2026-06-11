@@ -65,6 +65,20 @@ def test_rerank_batches_respect_total_character_budget() -> None:
     assert batches == [[(0, "a" * 5), (1, "b" * 5)], [(2, "c" * 5)]]
 
 
+def test_rerank_batches_keep_default_candidate_set_in_one_request() -> None:
+    # Default ingestion chunks are ~1200 chars. With a normal short query and
+    # 40 rerank candidates, bge-reranker still receives one /score call, so the
+    # safety cap does not slow down ordinary retrieval.
+    batches = rag._rerank_batches(
+        "normal engineering question",
+        ["p" * 1300 for _ in range(40)],
+        max_chars=64_000,
+    )
+
+    assert len(batches) == 1
+    assert len(batches[0]) == 40
+
+
 @pytest.mark.asyncio
 async def test_rank_hits_trims_query_and_batches_passages(monkeypatch) -> None:
     from app.core.config import Settings

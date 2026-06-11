@@ -143,9 +143,12 @@ def _build_coverage_judge() -> ChatOpenAI:
     )
 
 
-def _rerank_passage(hit: dict[str, Any]) -> str:
+def _rerank_passage(
+    hit: dict[str, Any], *, max_chars: int | None = None
+) -> str:
     """Include metadata in reranker input so tag/file matches affect ranking."""
-    s = get_settings()
+    if max_chars is None:
+        max_chars = get_settings().rag_rerank_passage_max_chars
     payload = hit["payload"]
     topics = payload.get("tags_topic") or []
     metadata_parts = [
@@ -161,7 +164,7 @@ def _rerank_passage(hit: dict[str, Any]) -> str:
     metadata = " | ".join(metadata_parts)
     text = str(payload.get("text") or "")
     passage = f"{metadata}\n{text}"
-    max_chars = max(1, s.rag_rerank_passage_max_chars)
+    max_chars = max(1, max_chars)
     if len(passage) <= max_chars:
         return passage
 
@@ -350,7 +353,9 @@ def _rerank_batches(
 async def _rank_hits(query: str, hits: list[dict[str, Any]]) -> list[tuple[int, float]]:
     s = get_settings()
     safe_query = _trim_text_window(query, max_chars=s.rag_rerank_query_max_chars)
-    passages = [_rerank_passage(h) for h in hits]
+    passages = [
+        _rerank_passage(h, max_chars=s.rag_rerank_passage_max_chars) for h in hits
+    ]
     batches = _rerank_batches(
         safe_query, passages, max_chars=s.rag_rerank_batch_max_chars
     )

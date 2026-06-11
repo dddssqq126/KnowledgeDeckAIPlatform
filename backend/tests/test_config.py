@@ -21,7 +21,7 @@ def test_settings_defaults_match_local_development() -> None:
     assert settings.rag_hybrid_prefetch_limit == 80
     assert settings.rag_per_file_context_limit == 3
     assert settings.rag_tag_match_boost == 0.05
-    assert settings.rag_rerank_query_max_chars == 6_000
+    assert settings.rag_rerank_query_max_chars == 2_000
     assert settings.rag_rerank_passage_max_chars == 3_000
     assert settings.rag_rerank_batch_max_chars == 64_000
     assert settings.gpu_device == "0"

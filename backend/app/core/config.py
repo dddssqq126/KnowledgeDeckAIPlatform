@@ -94,10 +94,12 @@ class Settings(BaseSettings):
     rag_tag_match_boost: float = 0.05
     rag_min_score: float = 0.30
     rag_rerank_min_score: float = 0.10
-    # Reranker inputs can be much larger than embedding chunks when old data or
-    # pasted-code queries reach retrieval. Cap query/passages and split score
-    # requests so vLLM's reranker context window is not exceeded.
-    rag_rerank_query_max_chars: int = 6_000
+    # BAAI/bge-reranker-v2-m3 is an 8K-token cross-encoder. These are
+    # character budgets (not token budgets) that keep each (query, passage)
+    # pair safely below that window while preserving one /score call for normal
+    # 1200-char chunks. Only unusually long pasted-code queries or oversized
+    # legacy chunks should trigger trimming/batch splitting.
+    rag_rerank_query_max_chars: int = 2_000
     rag_rerank_passage_max_chars: int = 3_000
     rag_rerank_batch_max_chars: int = 64_000
 
