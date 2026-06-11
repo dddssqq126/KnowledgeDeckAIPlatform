@@ -2,7 +2,7 @@ import hashlib
 import io
 
 ALLOWED_EXTENSIONS = {
-    "txt", "pdf", "cs", "md", "docx", "pptx",
+    "txt", "pdf", "cs", "md", "docx", "pptx", "xlsx",
     "py", "html", "css",  # common code formats — treated as UTF-8 text
 }
 
@@ -41,7 +41,7 @@ def validate_content(extension: str, head: bytes) -> None:
         if not head.startswith(b"%PDF"):
             raise ValidationError("invalid_content")
         return
-    if extension in ("docx", "pptx"):
+    if extension in ("docx", "pptx", "xlsx"):
         # OOXML containers are PKZIP-wrapped XML. The PK magic alone doesn't
         # prove it's the right kind of OOXML — that's the parser's job to
         # discover and surface as an ingest failure.

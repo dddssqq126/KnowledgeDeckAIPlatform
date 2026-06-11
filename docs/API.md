@@ -21,7 +21,7 @@ KnowledgeDeck exposes a REST API plus two SSE streaming endpoints. All endpoints
 |---|---|
 | `invalid_token` | Bearer header missing, malformed, or doesn't resolve to a user |
 | `not_found` | Resource doesn't exist or doesn't belong to the requesting user |
-| `invalid_extension` | Upload file extension not in `{txt, pdf, cs, md, docx, pptx, py, html, css}` |
+| `invalid_extension` | Upload file extension not in `{txt, pdf, cs, md, docx, pptx, xlsx, py, html, css}` |
 | `invalid_content` | Magic-byte or UTF-8 check failed |
 | `file_too_large` | Upload exceeded 50 MB |
 | `duplicate_filename` | KB already has a non-deleted file with the same name |
@@ -180,7 +180,7 @@ List files in a KB.
 
 Upload a file. Synchronous: parses + chunks + embeds + indexes inline. Returns the final file row with terminal status.
 
-**Request**: `multipart/form-data` with field `file`. Accepted extensions: `txt`, `md`, `pdf`, `cs`, `py`, `html`, `css`, `docx`, `pptx`. 50 MB cap.
+**Request**: `multipart/form-data` with field `file`. Accepted extensions: `txt`, `md`, `pdf`, `cs`, `py`, `html`, `css`, `docx`, `pptx`, `xlsx`. 50 MB cap.
 
 **Response 201**: same shape as the list entry above. `status` is `indexed` on success or `failed` on any pipeline error (with `status_error` populated).
 

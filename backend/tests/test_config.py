@@ -9,17 +9,30 @@ def test_settings_defaults_match_local_development() -> None:
     assert settings.llm_base_url == "http://knowledgedeck_vllm_chat:8000/v1"
     assert settings.llm_model == "google/gemma-4-E4B-it"
     assert settings.chat_answer_history_messages == 6
+    assert settings.chat_answer_history_message_max_chars == 4_000
+    assert settings.chat_answer_user_message_max_chars == 20_000
+    assert settings.chat_answer_context_max_chars == 60_000
+    assert settings.chat_answer_metadata_max_chars == 4_000
     assert settings.chat_rewrite_history_messages == 4
     assert settings.chat_rewrite_history_chars == 180
+    assert settings.chat_rewrite_user_message_chars == 4_000
     assert settings.embedding_base_url == "http://knowledgedeck_vllm_embedding:8001/v1"
     assert settings.embedding_model == "BAAI/bge-m3"
     assert settings.embedding_batch_size == 32
     assert settings.embedding_batch_max_chars == 24_000
+    assert settings.embedding_query_max_chars == 6_000
     assert settings.qdrant_upsert_batch_size == 64
     assert settings.rag_rerank_candidate_k == 40
     assert settings.rag_hybrid_prefetch_limit == 80
     assert settings.rag_per_file_context_limit == 3
     assert settings.rag_tag_match_boost == 0.05
+    assert settings.rerank_model == "BAAI/bge-reranker-base"
+    assert settings.rag_rerank_query_max_chars == 256
+    assert settings.rag_rerank_passage_max_chars == 1_000
+    assert settings.rag_rerank_batch_max_chars == 64_000
+    assert settings.rag_coverage_user_message_max_chars == 8_000
+    assert settings.rag_coverage_query_max_chars == 4_000
+    assert settings.rag_coverage_context_max_chars == 60_000
     assert settings.gpu_device == "0"
     assert settings.database_url == ("sqlite+aiosqlite:///./knowledgedeck.db")
     assert settings.initial_user_username == ""

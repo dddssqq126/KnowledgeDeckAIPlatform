@@ -5,11 +5,15 @@ Per-format behavior:
   - pdf           : one segment per page, page_number=<1-based>
   - pptx          : one segment per slide, page_number=<slide index>
   - docx          : one segment, page_number=None (no native page concept)
+  - xlsx          : one segment per worksheet, page_number=<sheet index>
 """
 from __future__ import annotations
 
 import io
+import posixpath
+import zipfile
 from dataclasses import dataclass
+from xml.etree import ElementTree as ET
 
 from docx import Document as DocxDocument
 from pptx import Presentation
@@ -79,6 +83,115 @@ def _parse_pptx(data: bytes) -> list[ParsedSegment]:
     return out
 
 
+def _xml_text(element: ET.Element) -> str:
+    return "".join(element.itertext())
+
+
+def _parse_shared_strings(zf: zipfile.ZipFile) -> list[str]:
+    try:
+        data = zf.read("xl/sharedStrings.xml")
+    except KeyError:
+        return []
+    root = ET.fromstring(data)
+    return [_xml_text(si) for si in root if si.tag.endswith("}si") or si.tag == "si"]
+
+
+def _workbook_sheets(zf: zipfile.ZipFile) -> list[tuple[str, str]]:
+    """Return (sheet_name, worksheet_zip_path) pairs in workbook order."""
+    workbook = ET.fromstring(zf.read("xl/workbook.xml"))
+    rels = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+    rel_targets: dict[str, str] = {}
+    for rel in rels:
+        rel_id = rel.attrib.get("Id")
+        target = rel.attrib.get("Target")
+        if not rel_id or not target:
+            continue
+        if target.startswith("/"):
+            path = target.lstrip("/")
+        else:
+            path = posixpath.normpath(posixpath.join("xl", target))
+        rel_targets[rel_id] = path
+
+    sheets: list[tuple[str, str]] = []
+    for sheet in workbook.iter():
+        if not sheet.tag.endswith("}sheet") and sheet.tag != "sheet":
+            continue
+        name = sheet.attrib.get("name") or "Sheet"
+        rel_id = sheet.attrib.get(
+            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+        )
+        if rel_id and rel_id in rel_targets:
+            sheets.append((name, rel_targets[rel_id]))
+    return sheets
+
+
+def _cell_value(
+    cell: ET.Element, *, shared_strings: list[str]
+) -> str:
+    cell_type = cell.attrib.get("t")
+    if cell_type == "inlineStr":
+        inline = next(
+            (child for child in cell if child.tag.endswith("}is") or child.tag == "is"),
+            None,
+        )
+        return _xml_text(inline).strip() if inline is not None else ""
+
+    value_el = next(
+        (child for child in cell if child.tag.endswith("}v") or child.tag == "v"),
+        None,
+    )
+    if value_el is None or value_el.text is None:
+        return ""
+    raw = value_el.text.strip()
+    if cell_type == "s":
+        try:
+            return shared_strings[int(raw)].strip()
+        except (ValueError, IndexError):
+            return raw
+    if cell_type == "b":
+        return "TRUE" if raw == "1" else "FALSE"
+    return raw
+
+
+def _parse_worksheet(
+    zf: zipfile.ZipFile, path: str, *, name: str, shared_strings: list[str]
+) -> str:
+    root = ET.fromstring(zf.read(path))
+    lines: list[str] = [f"Sheet: {name}"]
+    for row in root.iter():
+        if not row.tag.endswith("}row") and row.tag != "row":
+            continue
+        cells: list[str] = []
+        for cell in row:
+            if not cell.tag.endswith("}c") and cell.tag != "c":
+                continue
+            value = _cell_value(cell, shared_strings=shared_strings)
+            if value:
+                cells.append(value)
+        if cells:
+            lines.append("\t".join(cells))
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _parse_xlsx(data: bytes) -> list[ParsedSegment]:
+    """Extract workbook text as one segment per worksheet.
+
+    Uses the XLSX OOXML files directly instead of an optional spreadsheet
+    dependency. Cells in each row are joined by tabs so RAG keeps table shape
+    while still embedding plain text.
+    """
+    out: list[ParsedSegment] = []
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        shared_strings = _parse_shared_strings(zf)
+        for i, (name, path) in enumerate(_workbook_sheets(zf), start=1):
+            text = _parse_worksheet(
+                zf, path, name=name, shared_strings=shared_strings
+            )
+            if text.strip():
+                out.append(ParsedSegment(text=text, page_number=i))
+    return out
+
+
 # Plain-text-ish formats: decoded as UTF-8 into a single segment. Includes
 # code formats — embedding them as raw source works well enough for RAG;
 # we don't strip language-specific syntax (HTML tags / Python comments).
@@ -94,4 +207,6 @@ def parse(extension: str, data: bytes) -> list[ParsedSegment]:
         return _parse_docx(data)
     if extension == "pptx":
         return _parse_pptx(data)
+    if extension == "xlsx":
+        return _parse_xlsx(data)
     raise ValueError(f"unsupported extension: {extension}")
