@@ -7,7 +7,7 @@ scored, reranked, and formatted lives here.
 Pipeline (each turn that opts into RAG):
   1. Embed the query in parallel: dense (bge-m3) + sparse (BM25).
   2. Qdrant hybrid_search → dense top-N + sparse top-N → RRF fusion.
-  3. Cross-encoder rerank (bge-reranker-v2-m3 via vLLM `/score`).
+  3. Cross-encoder rerank (bge-reranker-base via vLLM `/score`).
   4. Drop anything below `rag_rerank_min_score`.
   5. Take rerank top-K and format into a `Context:` block + citation list.
 

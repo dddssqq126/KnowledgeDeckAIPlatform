@@ -66,12 +66,13 @@ def test_rerank_batches_respect_total_character_budget() -> None:
 
 
 def test_rerank_batches_keep_default_candidate_set_in_one_request() -> None:
-    # Default ingestion chunks are ~1200 chars. With a normal short query and
-    # 40 rerank candidates, bge-reranker still receives one /score call, so the
-    # safety cap does not slow down ordinary retrieval.
+    # bge-reranker-base has a 512-token window, so each passage is capped
+    # before scoring. With the default 40 rerank candidates, the capped inputs
+    # still fit in one /score call, so normal retrieval keeps the same request
+    # count.
     batches = rag._rerank_batches(
         "normal engineering question",
-        ["p" * 1300 for _ in range(40)],
+        ["p" * 1000 for _ in range(40)],
         max_chars=64_000,
     )
 

@@ -94,19 +94,19 @@ class Settings(BaseSettings):
     rag_tag_match_boost: float = 0.05
     rag_min_score: float = 0.30
     rag_rerank_min_score: float = 0.10
-    # BAAI/bge-reranker-v2-m3 is an 8K-token cross-encoder. These are
+    # BAAI/bge-reranker-base is a 512-token cross-encoder. These are
     # character budgets (not token budgets) that keep each (query, passage)
-    # pair safely below that window while preserving one /score call for normal
-    # 1200-char chunks. Only unusually long pasted-code queries or oversized
-    # legacy chunks should trigger trimming/batch splitting.
-    rag_rerank_query_max_chars: int = 2_000
-    rag_rerank_passage_max_chars: int = 3_000
+    # pair safely below that small window while preserving one /score call for
+    # the normal 40-candidate rerank set. Longer chunks are trimmed only for
+    # rerank scoring; final answer context still uses the selected chunk text.
+    rag_rerank_query_max_chars: int = 256
+    rag_rerank_passage_max_chars: int = 1_000
     rag_rerank_batch_max_chars: int = 64_000
 
     # Reranker (cross-encoder) — separate vLLM service running in score mode.
     rerank_base_url: str = "http://knowledgedeck_vllm_rerank:8000/v1"
     rerank_api_key: str = "local-dev-key"
-    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_model: str = "BAAI/bge-reranker-base"
 
     # Presenton (PPTX rendering) — runs as a separate compose service. The
     # shared volume mounted at presenton_data_root lets backend read PPTX
