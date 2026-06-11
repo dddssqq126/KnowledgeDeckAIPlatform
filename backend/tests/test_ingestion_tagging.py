@@ -193,6 +193,54 @@ def test_embedding_batches_respect_character_limit() -> None:
     assert batches == [["aa", "bbb"], ["c", "dddd"], ["ee"]]
 
 
+def test_trim_embedding_query_leaves_short_query_unchanged() -> None:
+    assert (
+        ingestion._trim_embedding_query("  short query  ", max_chars=80)
+        == "short query"
+    )
+
+
+def test_trim_embedding_query_preserves_head_and_tail() -> None:
+    text = "HEAD" + ("x" * 100) + "TAIL"
+
+    trimmed = ingestion._trim_embedding_query(text, max_chars=80)
+
+    assert len(trimmed) == 80
+    assert trimmed.startswith("HEAD")
+    assert trimmed.endswith("TAIL")
+    assert "truncated before embedding" in trimmed
+
+
+@pytest.mark.asyncio
+async def test_embed_query_trims_long_user_query(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    captured: list[str] = []
+
+    class _FakeEmbeddingClient:
+        async def create_embeddings(self, texts):
+            captured.extend(texts)
+            return {"data": [{"embedding": [1.0]}]}
+
+    monkeypatch.setattr(
+        ingestion,
+        "get_settings",
+        lambda: Settings(embedding_query_max_chars=80, embedding_batch_max_chars=999),
+    )
+    monkeypatch.setattr(
+        ingestion, "_build_embedding_client", lambda: _FakeEmbeddingClient()
+    )
+
+    vector = await ingestion.embed_query("start" + ("x" * 200) + "finish")
+
+    assert vector == [1.0]
+    assert len(captured) == 1
+    assert len(captured[0]) == 80
+    assert captured[0].startswith("start")
+    assert captured[0].endswith("finish")
+    assert "truncated before embedding" in captured[0]
+
+
 @pytest.mark.asyncio
 async def test_embed_auto_splits_failed_batches(monkeypatch) -> None:
     from app.core.config import Settings
