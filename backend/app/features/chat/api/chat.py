@@ -752,25 +752,39 @@ async def stream_chat(
                         history=history, user_message=user_message
                     )
                 query_tags = chat_service.detect_query_tags(user_message, rag_query)
-                if deep_mode:
-                    rag_result = await rag.retrieve_context_checked(
-                        user_id=user_id,
-                        kb_ids=kb_ids,
-                        query=rag_query,
-                        user_message=user_message,
-                        query_tags=query_tags,
-                        deep_mode=True,
+                try:
+                    if deep_mode:
+                        rag_result = await rag.retrieve_context_checked(
+                            user_id=user_id,
+                            kb_ids=kb_ids,
+                            query=rag_query,
+                            user_message=user_message,
+                            query_tags=query_tags,
+                            deep_mode=True,
+                        )
+                        context = rag_result.context
+                        citations = rag_result.citations
+                        retrieval_note = rag_result.diagnostics.retrieval_note()
+                    else:
+                        context, citations = await rag.retrieve_context(
+                            user_id=user_id,
+                            kb_ids=kb_ids,
+                            query=rag_query,
+                            query_tags=query_tags,
+                            deep_mode=False,
+                        )
+                except Exception:
+                    if not attachment_context:
+                        raise
+                    logger.exception(
+                        "chat_rag_retrieval_failed_with_attachments "
+                        "session=%s uploads=%s",
+                        session_id,
+                        len(uploads),
                     )
-                    context = rag_result.context
-                    citations = rag_result.citations
-                    retrieval_note = rag_result.diagnostics.retrieval_note()
-                else:
-                    context, citations = await rag.retrieve_context(
-                        user_id=user_id,
-                        kb_ids=kb_ids,
-                        query=rag_query,
-                        query_tags=query_tags,
-                        deep_mode=False,
+                    retrieval_note = (
+                        "Knowledge-base retrieval failed, so this response is "
+                        "based on the uploaded file content and chat history only."
                     )
 
             if attachment_context:

@@ -137,3 +137,52 @@ async def test_chat_stream_normal_rag_skips_checked_retrieval(
     assert captured["normal_kwargs"]["deep_mode"] is False
     assert captured["context"] == "normal context"
     assert captured["retrieval_note"] is None
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_with_attachment_continues_when_rag_retrieval_fails(
+    http_client, db_session, alice: User, monkeypatch
+) -> None:
+    chat = ChatSession(owner_user_id=alice.id, title="Attachment fallback")
+    db_session.add(chat)
+    await db_session.commit()
+    await db_session.refresh(chat)
+    captured: dict[str, object] = {}
+
+    async def fake_rewrite_for_retrieval(**_kwargs):
+        return "rewritten query"
+
+    async def fail_retrieval(**_kwargs):
+        raise RuntimeError("retrieval endpoint returned 404")
+
+    async def fake_stream_answer(**kwargs):
+        captured["context"] = kwargs.get("context")
+        captured["retrieval_note"] = kwargs.get("retrieval_note")
+        yield "answer from attachment"
+
+    monkeypatch.setattr(
+        chat_api.chat_service,
+        "rewrite_for_retrieval",
+        fake_rewrite_for_retrieval,
+    )
+    monkeypatch.setattr(chat_api.rag, "retrieve_context", fail_retrieval)
+    monkeypatch.setattr(chat_api.chat_service, "stream_answer", fake_stream_answer)
+
+    res = await http_client.post(
+        "/chat/stream",
+        headers=auth(alice),
+        data={
+            "session_id": str(chat.id),
+            "message": "Please summarize this CSV",
+            "use_rag": "true",
+            "kb_ids": "null",
+        },
+        files={"files": ("table.csv", b"Name,Value\nPlatform,UltraFLEX\n", "text/csv")},
+    )
+
+    assert res.status_code == 200
+    assert "event: token" in res.text
+    assert "answer from attachment" in res.text
+    assert "event: error" not in res.text
+    assert "Platform\tUltraFLEX" in str(captured["context"])
+    assert "Knowledge-base retrieval failed" in str(captured["retrieval_note"])

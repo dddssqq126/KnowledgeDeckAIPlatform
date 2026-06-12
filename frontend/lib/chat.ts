@@ -180,6 +180,23 @@ export function buildStreamFormData(req: StreamRequest): FormData {
   return form;
 }
 
+async function formatStreamHttpError(res: Response): Promise<string> {
+  let detail = "";
+  try {
+    const contentType = res.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      const body = await res.json();
+      const rawDetail = body?.detail;
+      detail = typeof rawDetail === "string" ? rawDetail : JSON.stringify(rawDetail);
+    } else {
+      detail = (await res.text()).trim();
+    }
+  } catch {
+    detail = "";
+  }
+  return detail ? `HTTP ${res.status}: ${detail}` : `HTTP ${res.status}`;
+}
+
 /**
  * Streams a chat reply via SSE using fetch + ReadableStream so we can attach
  * the Bearer token (EventSource cannot set headers).
@@ -226,7 +243,7 @@ export async function streamChat(
     return;
   }
   if (!res.ok || !res.body) {
-    handlers.onError(`HTTP ${res.status}`);
+    handlers.onError(await formatStreamHttpError(res));
     return;
   }
 
