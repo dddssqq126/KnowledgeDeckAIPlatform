@@ -6,6 +6,7 @@ from fastapi import (
     Depends,
     File,
     HTTPException,
+    Response,
     UploadFile,
     status,
 )
@@ -19,7 +20,7 @@ from app.db.base import get_db
 from app.db.models import FileStatus, KnowledgeBase, KnowledgeFile, User
 from app.features.knowledge_bases.services import file_service
 from app.features.rag.services import ingestion
-from app.features.knowledge_bases.services.object_storage import get_storage_client
+from app.features.knowledge_bases.services.object_storage import get_minio_client
 
 router = APIRouter(prefix="/knowledge-bases", tags=["files"])
 
@@ -47,6 +48,8 @@ def _content_type_for(extension: str) -> str:
         "py": "text/x-python; charset=utf-8",
         "html": "text/html; charset=utf-8",
         "css": "text/css; charset=utf-8",
+        "csv": "text/csv; charset=utf-8",
+        "tsv": "text/tab-separated-values; charset=utf-8",
         "docx": (
             "application/vnd.openxmlformats-officedocument."
             "wordprocessingml.document"
@@ -54,6 +57,10 @@ def _content_type_for(extension: str) -> str:
         "pptx": (
             "application/vnd.openxmlformats-officedocument."
             "presentationml.presentation"
+        ),
+        "xlsx": (
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
         ),
     }
     # Falls back to a binary safe default; defensive in case a new extension
@@ -87,6 +94,14 @@ def _file_out(r: KnowledgeFile) -> FileOut:
         status_error=r.status_error,
         created_at=r.created_at.isoformat(),
     )
+
+
+def _attachment_headers(filename: str, size_bytes: int) -> dict[str, str]:
+    safe_filename = filename.replace("\\", "_").replace("/", "_").replace('"', "'")
+    return {
+        "Content-Disposition": f'attachment; filename="{safe_filename}"',
+        "Content-Length": str(size_bytes),
+    }
 
 
 @router.post(
@@ -143,7 +158,7 @@ async def upload_file(
     row.storage_key = f"kb/{kb.id}/files/{row.id}/original.{extension}"
 
     try:
-        await get_storage_client().put_object(
+        await get_minio_client().put_object(
             row.storage_key,
             io.BytesIO(data),
             size,
@@ -183,6 +198,36 @@ async def list_files(
         .order_by(KnowledgeFile.created_at.desc())
     )
     return [_file_out(r) for r in rows.all()]
+
+
+@router.get("/files/{file_id}/download")
+async def download_file(
+    file_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    row = await session.scalar(
+        select(KnowledgeFile).where(
+            KnowledgeFile.id == file_id,
+            KnowledgeFile.owner_user_id == user.id,
+            KnowledgeFile.deleted_at.is_(None),
+        )
+    )
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="file_not_found")
+
+    try:
+        data = await get_minio_client().get_object(row.storage_key)
+    except Exception:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, detail="storage_error"
+        )
+
+    return Response(
+        content=data,
+        media_type=_content_type_for(row.extension),
+        headers=_attachment_headers(row.filename, len(data)),
+    )
 
 
 @router.delete("/{kb_id}/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)

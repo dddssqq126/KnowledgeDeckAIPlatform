@@ -145,6 +145,8 @@ class ChatSession(Base):
         back_populates="session", order_by="ChatMessage.id"
     )
 
+    shares: Mapped[list["ChatSessionShare"]] = relationship(back_populates="session")
+
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
@@ -170,6 +172,37 @@ class ChatMessage(Base):
     )
 
     session: Mapped[ChatSession] = relationship(back_populates="messages")
+
+
+class ChatSessionShare(Base):
+    __tablename__ = "chat_session_shares"
+
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
+    session_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("chat_sessions.id"), nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("users.id"), nullable=False
+    )
+    token: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    session: Mapped[ChatSession] = relationship(back_populates="shares")
+
+    __table_args__ = (
+        Index(
+            "uq_chat_session_active_share",
+            "session_id",
+            unique=True,
+            postgresql_where=sa.text("revoked_at IS NULL"),
+        ),
+        Index("ix_chat_session_shares_token_active", "token", "revoked_at"),
+    )
 
 
 class SlideStatus(enum.Enum):

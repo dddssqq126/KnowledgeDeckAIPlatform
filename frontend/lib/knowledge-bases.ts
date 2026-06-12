@@ -1,6 +1,8 @@
 "use client";
 
 import { api } from "./api";
+import { downloadBlob, safeFilename } from "./download";
+import { isMockDataMode } from "./mock-mode";
 
 export type FileStatus =
   | "uploaded"
@@ -95,4 +97,37 @@ export async function uploadFile(
 
 export async function deleteFile(kbId: number, fileId: number): Promise<void> {
   await api.delete(`/knowledge-bases/${kbId}/files/${fileId}`);
+}
+
+export async function downloadKnowledgeFile(
+  fileId: number,
+  fallbackFilename: string,
+): Promise<void> {
+  if (isMockDataMode()) {
+    downloadBlob(
+      new Blob([`Mock source download for ${fallbackFilename}\n`], {
+        type: "text/plain;charset=utf-8",
+      }),
+      safeFilename(fallbackFilename, `source-${fileId}.txt`),
+    );
+    return;
+  }
+
+  const res = await api.get<Blob>(`/knowledge-bases/files/${fileId}/download`, {
+    responseType: "blob",
+  });
+  const filename =
+    filenameFromContentDisposition(res.headers["content-disposition"]) ??
+    safeFilename(fallbackFilename, `source-${fileId}`);
+  downloadBlob(res.data, filename);
+}
+
+function filenameFromContentDisposition(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(value);
+  if (utf8?.[1]) return safeFilename(decodeURIComponent(utf8[1]));
+  const quoted = /filename="([^"]+)"/i.exec(value);
+  if (quoted?.[1]) return safeFilename(quoted[1]);
+  const bare = /filename=([^;]+)/i.exec(value);
+  return bare?.[1] ? safeFilename(bare[1]) : null;
 }

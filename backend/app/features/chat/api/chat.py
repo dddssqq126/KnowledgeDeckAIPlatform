@@ -4,10 +4,12 @@ GET/POST/DELETE /chat/sessions for session management; POST /chat/stream for
 the actual SSE streaming response. Auth via the existing get_current_user
 dependency. Sessions are user-scoped — cross-user access returns 404.
 """
+
 from __future__ import annotations
 
 import json
 import logging
+import secrets
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from typing import Any
@@ -21,7 +23,7 @@ from sqlalchemy.orm import selectinload
 
 from app.shared.api.deps import get_current_user
 from app.db.base import async_session_factory, get_db
-from app.db.models import ChatMessage, ChatRole, ChatSession, User
+from app.db.models import ChatMessage, ChatRole, ChatSession, ChatSessionShare, User
 from app.features.chat.services import chat_service
 from app.features.rag.services import rag
 
@@ -56,11 +58,89 @@ class SessionDetail(SessionOut):
     messages: list[MessageOut]
 
 
+class ShareOut(BaseModel):
+    token: str
+    url_path: str
+
+
 class StreamRequest(BaseModel):
     session_id: int
     message: str = Field(min_length=1)
     use_rag: bool = False
     kb_ids: list[int] | None = None
+
+
+def _detect_code_assist_intent(message: str) -> str | None:
+    """Return a short intent label when the request looks code-related."""
+    text = message.lower()
+    code_markers = (
+        "```",
+        "`",
+        ".py",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        "function",
+        "class",
+        "method",
+        "api endpoint",
+        "stack trace",
+        "traceback",
+        "exception",
+        "程式碼",
+        "代码",
+        "函式",
+        "函数",
+        "類別",
+        "类",
+    )
+    code_actions = (
+        "explain",
+        "review",
+        "fix",
+        "debug",
+        "refactor",
+        "implement",
+        "modify",
+        "change",
+        "update",
+        "write",
+        "generate",
+        "test",
+        "說明",
+        "解释",
+        "修復",
+        "修复",
+        "除錯",
+        "调试",
+        "重構",
+        "重构",
+        "實作",
+        "实现",
+        "修改",
+        "更新",
+        "撰寫",
+        "生成",
+        "測試",
+        "测试",
+    )
+    if not any(marker in text for marker in code_markers):
+        return None
+    if "debug" in text or "traceback" in text or "exception" in text or "除錯" in text:
+        return "debug or fix code"
+    if "refactor" in text or "重構" in text or "重构" in text:
+        return "refactor code"
+    if any(
+        action in text
+        for action in ("implement", "write", "generate", "實作", "实现", "撰寫", "生成")
+    ):
+        return "implement code"
+    if any(action in text for action in ("review", "explain", "說明", "解释")):
+        return "explain or review code"
+    if any(action in text for action in code_actions):
+        return "modify code"
+    return "general code assistance"
 
 
 def _session_out(s: ChatSession) -> SessionOut:
@@ -83,7 +163,11 @@ def _message_out(m: ChatMessage) -> MessageOut:
 
 
 async def _load_owned_session(
-    session: AsyncSession, *, owner_user_id: int, session_id: int, with_messages: bool = False
+    session: AsyncSession,
+    *,
+    owner_user_id: int,
+    session_id: int,
+    with_messages: bool = False,
 ) -> ChatSession:
     stmt = select(ChatSession).where(
         ChatSession.id == session_id,
@@ -98,7 +182,9 @@ async def _load_owned_session(
     return s
 
 
-@router.post("/sessions", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/sessions", response_model=SessionOut, status_code=status.HTTP_201_CREATED
+)
 async def create_session(
     body: SessionCreate,
     user: User = Depends(get_current_user),
@@ -145,6 +231,60 @@ async def get_session(
     )
 
 
+@router.post("/sessions/{session_id}/share", response_model=ShareOut)
+async def share_session(
+    session_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> ShareOut:
+    s = await _load_owned_session(session, owner_user_id=user.id, session_id=session_id)
+    existing = await session.scalar(
+        select(ChatSessionShare).where(
+            ChatSessionShare.session_id == s.id,
+            ChatSessionShare.revoked_at.is_(None),
+        )
+    )
+    if existing is None:
+        existing = ChatSessionShare(
+            session_id=s.id,
+            owner_user_id=user.id,
+            token=secrets.token_urlsafe(24),
+        )
+        session.add(existing)
+        await session.commit()
+        await session.refresh(existing)
+    return ShareOut(token=existing.token, url_path=f"/shared-chat/{existing.token}")
+
+
+@router.get("/shares/{token}", response_model=SessionDetail)
+async def get_shared_session(
+    token: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> SessionDetail:
+    share = await session.scalar(
+        select(ChatSessionShare)
+        .where(
+            ChatSessionShare.token == token,
+            ChatSessionShare.revoked_at.is_(None),
+        )
+        .options(
+            selectinload(ChatSessionShare.session).selectinload(ChatSession.messages)
+        )
+    )
+    if share is None or share.session is None or share.session.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="share_not_found")
+
+    s = share.session
+    return SessionDetail(
+        id=s.id,
+        title=s.title,
+        created_at=s.created_at.isoformat(),
+        updated_at=s.updated_at.isoformat(),
+        messages=[_message_out(m) for m in s.messages],
+    )
+
+
 @router.patch("/sessions/{session_id}", response_model=SessionOut)
 async def update_session(
     session_id: int,
@@ -152,9 +292,7 @@ async def update_session(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> SessionOut:
-    s = await _load_owned_session(
-        session, owner_user_id=user.id, session_id=session_id
-    )
+    s = await _load_owned_session(session, owner_user_id=user.id, session_id=session_id)
     s.title = body.title
     await session.commit()
     await session.refresh(s)
@@ -210,6 +348,8 @@ async def stream_chat(
         try:
             citations: list[dict[str, Any]] = []
             context = ""
+            rag_query: str | None = None
+            code_assist_intent: str | None = None
             if use_rag:
                 # Multi-turn follow-ups ("and Python?", "what about that one?")
                 # are not standalone — embedding them directly drags retrieval
@@ -218,13 +358,35 @@ async def stream_chat(
                 rag_query = await chat_service.rewrite_for_retrieval(
                     history=history, user_message=user_message
                 )
+                code_assist_intent = _detect_code_assist_intent(user_message)
+                code_intent = chat_service.detect_code_assist_intent(user_message)
+                if code_intent is not None:
+                    # Code queries must keep identifiers, import paths, and
+                    # error messages intact, so use the deterministic
+                    # code-aware rewriter instead of the natural-language
+                    # document rewriter.
+                    rag_query = chat_service.rewrite_for_code_retrieval(
+                        history=history, user_message=user_message, intent=code_intent
+                    )
+                else:
+                    # Multi-turn follow-ups ("and Python?", "what about that one?")
+                    # are not standalone — embedding them directly drags retrieval
+                    # off-topic. Rewriter resolves references against history into
+                    # a self-contained query before we hit the vector store.
+                    rag_query = await chat_service.rewrite_for_retrieval(
+                        history=history, user_message=user_message
+                    )
                 context, citations = await rag.retrieve_context(
                     user_id=user_id, kb_ids=kb_ids, query=rag_query
                 )
 
             collected: list[str] = []
             async for token in chat_service.stream_answer(
-                history=history, user_message=user_message, context=context
+                history=history,
+                user_message=user_message,
+                context=context,
+                rag_query=rag_query,
+                code_assist_intent=code_assist_intent,
             ):
                 collected.append(token)
                 yield _sse("token", {"text": token})
