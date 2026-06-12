@@ -376,7 +376,10 @@ def detect_code_assist_intent(user_message: str) -> str | None:
 
 
 def rewrite_for_code_retrieval(
-    history: list[ChatMessage], user_message: str, intent: str
+    history: list[ChatMessage],
+    user_message: str,
+    intent: str,
+    attachment_retrieval_text: str = "",
 ) -> str:
     """Build a code-aware retrieval query while preserving exact identifiers.
 
@@ -410,6 +413,15 @@ def rewrite_for_code_retrieval(
                 for turn in recent_user_turns[-2:]
             )
             parts.append(f"Recent user context: {recent_context}")
+
+    if attachment_retrieval_text:
+        safe_attachment_text = _trim_answer_input(
+            attachment_retrieval_text, max_chars=s.chat_attachment_retrieval_chars
+        )
+        parts.append(
+            "Uploaded file text for retrieval hints; use exact symbols, errors, "
+            f"filenames, and domain terms when relevant:\n{safe_attachment_text}"
+        )
 
     parts.append(f"User request: {safe_user_message}")
     return "\n".join(parts)
@@ -521,7 +533,11 @@ def _symbol_lookup_query(symbol: str) -> str:
     return _SYMBOL_QUERY_TEMPLATE.format(symbol=symbol)
 
 
-async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -> str:
+async def rewrite_for_retrieval(
+    history: list[ChatMessage],
+    user_message: str,
+    attachment_retrieval_text: str = "",
+) -> str:
     """Rewrite the user's question into a standalone, abbreviation-expanded
     query for the retrieval pipeline.
 
@@ -530,6 +546,10 @@ async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -
     abbreviations like "k8s" / "aws" — without it, cross-encoder rerank
     scores those tokens far below threshold and citations vanish.
 
+    `attachment_retrieval_text` is parsed uploaded-file text used only as
+    retrieval hints. It is intentionally separate from `user_message` so the
+    final answer still responds to the user's original request.
+
     On any LLM error or off-rails output, falls back to the raw user
     message so retrieval still runs.
     """
@@ -537,10 +557,22 @@ async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -
     if symbol:
         return _symbol_lookup_query(symbol)
 
+    s = get_settings()
+    attachment_section = ""
+    if attachment_retrieval_text:
+        safe_attachment_text = _trim_answer_input(
+            attachment_retrieval_text, max_chars=s.chat_attachment_retrieval_chars
+        )
+        attachment_section = (
+            "\n\nUploaded file text for retrieval hints. Use it to add exact "
+            "filenames, product names, error messages, identifiers, and domain "
+            "terms to the standalone query when relevant; do not summarize the "
+            f"file as the answer.\n{safe_attachment_text}"
+        )
+
     if history:
         # Multi-turn: feed only a very small recent window so the rewriter can
         # resolve short follow-ups without dragging in old answer content.
-        s = get_settings()
         recent = history[-max(0, s.chat_rewrite_history_messages) :]
         max_chars = max(40, s.chat_rewrite_history_chars)
         transcript_lines: list[str] = []
@@ -558,18 +590,22 @@ async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -
         prompt = (
             "Conversation history:\n"
             + "\n".join(transcript_lines)
-            + f"\n\nMost recent question:\n{safe_user_message}\n\nStandalone query:"
+            + f"\n\nMost recent question:\n{safe_user_message}"
+            + attachment_section
+            + "\n\nStandalone query:"
         )
     else:
         # First turn: no history to resolve against; rewriter still
         # handles abbreviation expansion + bare-term reformulation.
-        s = get_settings()
         safe_user_message = _trim_answer_input(
             user_message, max_chars=s.chat_rewrite_user_message_chars
         )
-        prompt = f"Question:\n{safe_user_message}\n\nStandalone search query:"
+        prompt = (
+            f"Question:\n{safe_user_message}"
+            + attachment_section
+            + "\n\nStandalone search query:"
+        )
 
-    s = get_settings()
     try:
         rewriter = ChatOpenAI(
             model=s.llm_model,
