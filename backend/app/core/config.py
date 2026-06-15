@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     chat_answer_user_message_max_chars: int = 20_000
     chat_answer_context_max_chars: int = 60_000
     chat_answer_metadata_max_chars: int = 4_000
+    # Parsed chat attachments are appended to answer context, but only this
+    # smaller cleaned budget is used as retrieval-query hints.
+    chat_attachment_retrieval_chars: int = 4_000
     # Query rewrite only needs enough history to resolve short follow-ups.
     chat_rewrite_history_messages: int = 4
     chat_rewrite_history_chars: int = 180
