@@ -28,6 +28,30 @@ from app.features.rag.services import tagger
 
 logger = logging.getLogger(__name__)
 
+_ANSWER_TRUNCATION_MARKER = "\n...[truncated before answer generation due to prompt length]...\n"
+
+
+def _trim_answer_input(text: str, *, max_chars: int) -> str:
+    """Trim oversized answer-generation inputs while preserving head and tail."""
+    max_chars = max(1, max_chars)
+    # Fast path for normal prompts: preserve the exact short string and avoid
+    # allocating a truncation marker/window.
+    if len(text) <= max_chars:
+        return text
+
+    text = text.strip()
+    if max_chars <= len(_ANSWER_TRUNCATION_MARKER):
+        return text[:max_chars]
+
+    head_chars = (max_chars - len(_ANSWER_TRUNCATION_MARKER)) // 2
+    tail_chars = max_chars - len(_ANSWER_TRUNCATION_MARKER) - head_chars
+    return (
+        f"{text[:head_chars].rstrip()}"
+        f"{_ANSWER_TRUNCATION_MARKER}"
+        f"{text[-tail_chars:].lstrip()}"
+    )
+
+
 _IDENTIFIER_RE = r"[A-Za-z_][A-Za-z0-9_]*"
 _SYMBOL_RE = re.compile(rf"^{_IDENTIFIER_RE}(?:\.{_IDENTIFIER_RE})*$")
 _SYMBOL_TOKEN_RE = re.compile(
@@ -352,15 +376,22 @@ def detect_code_assist_intent(user_message: str) -> str | None:
 
 
 def rewrite_for_code_retrieval(
-    history: list[ChatMessage], user_message: str, intent: str
+    history: list[ChatMessage],
+    user_message: str,
+    intent: str,
+    attachment_retrieval_text: str = "",
 ) -> str:
     """Build a code-aware retrieval query while preserving exact identifiers.
 
     This rewrite is deterministic on purpose: code retrieval quality depends on
     exact function names, class names, variable names, error text, and import
-    paths surviving unchanged. The raw user message is therefore embedded
-    verbatim and augmented only with code-search target terms.
+    paths surviving unchanged. The user message is capped only when it is
+    unusually large so downstream embedding/rerank/LLM prompts stay bounded.
     """
+    s = get_settings()
+    safe_user_message = _trim_answer_input(
+        user_message, max_chars=s.chat_rewrite_user_message_chars
+    )
     target = _CODE_RETRIEVAL_TARGETS.get(
         intent, _CODE_RETRIEVAL_TARGETS[CODE_INTENT_SNIPPET]
     )
@@ -383,7 +414,16 @@ def rewrite_for_code_retrieval(
             )
             parts.append(f"Recent user context: {recent_context}")
 
-    parts.append(f"User request: {user_message}")
+    if attachment_retrieval_text:
+        safe_attachment_text = _trim_answer_input(
+            attachment_retrieval_text, max_chars=s.chat_attachment_retrieval_chars
+        )
+        parts.append(
+            "Uploaded file text for retrieval hints; use exact symbols, errors, "
+            f"filenames, and domain terms when relevant:\n{safe_attachment_text}"
+        )
+
+    parts.append(f"User request: {safe_user_message}")
     return "\n".join(parts)
 
 
@@ -493,7 +533,11 @@ def _symbol_lookup_query(symbol: str) -> str:
     return _SYMBOL_QUERY_TEMPLATE.format(symbol=symbol)
 
 
-async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -> str:
+async def rewrite_for_retrieval(
+    history: list[ChatMessage],
+    user_message: str,
+    attachment_retrieval_text: str = "",
+) -> str:
     """Rewrite the user's question into a standalone, abbreviation-expanded
     query for the retrieval pipeline.
 
@@ -502,6 +546,10 @@ async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -
     abbreviations like "k8s" / "aws" — without it, cross-encoder rerank
     scores those tokens far below threshold and citations vanish.
 
+    `attachment_retrieval_text` is parsed uploaded-file text used only as
+    retrieval hints. It is intentionally separate from `user_message` so the
+    final answer still responds to the user's original request.
+
     On any LLM error or off-rails output, falls back to the raw user
     message so retrieval still runs.
     """
@@ -509,10 +557,22 @@ async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -
     if symbol:
         return _symbol_lookup_query(symbol)
 
+    s = get_settings()
+    attachment_section = ""
+    if attachment_retrieval_text:
+        safe_attachment_text = _trim_answer_input(
+            attachment_retrieval_text, max_chars=s.chat_attachment_retrieval_chars
+        )
+        attachment_section = (
+            "\n\nUploaded file text for retrieval hints. Use it to add exact "
+            "filenames, product names, error messages, identifiers, and domain "
+            "terms to the standalone query when relevant; do not summarize the "
+            f"file as the answer.\n{safe_attachment_text}"
+        )
+
     if history:
         # Multi-turn: feed only a very small recent window so the rewriter can
         # resolve short follow-ups without dragging in old answer content.
-        s = get_settings()
         recent = history[-max(0, s.chat_rewrite_history_messages) :]
         max_chars = max(40, s.chat_rewrite_history_chars)
         transcript_lines: list[str] = []
@@ -524,17 +584,28 @@ async def rewrite_for_retrieval(history: list[ChatMessage], user_message: str) -
                 else m.content[:max_chars] + "..."
             )
             transcript_lines.append(f"{role}: {body}")
+        safe_user_message = _trim_answer_input(
+            user_message, max_chars=s.chat_rewrite_user_message_chars
+        )
         prompt = (
             "Conversation history:\n"
             + "\n".join(transcript_lines)
-            + f"\n\nMost recent question:\n{user_message}\n\nStandalone query:"
+            + f"\n\nMost recent question:\n{safe_user_message}"
+            + attachment_section
+            + "\n\nStandalone query:"
         )
     else:
         # First turn: no history to resolve against; rewriter still
         # handles abbreviation expansion + bare-term reformulation.
-        prompt = f"Question:\n{user_message}\n\nStandalone search query:"
+        safe_user_message = _trim_answer_input(
+            user_message, max_chars=s.chat_rewrite_user_message_chars
+        )
+        prompt = (
+            f"Question:\n{safe_user_message}"
+            + attachment_section
+            + "\n\nStandalone search query:"
+        )
 
-    s = get_settings()
     try:
         rewriter = ChatOpenAI(
             model=s.llm_model,
@@ -576,12 +647,14 @@ def _history_window(rows: list[ChatMessage], max_messages: int) -> list[ChatMess
 def _history_to_messages(rows: list[ChatMessage]) -> list[HumanMessage | AIMessage]:
     s = get_settings()
     max_messages = max(0, s.chat_answer_history_messages)
+    max_chars = max(1, s.chat_answer_history_message_max_chars)
     msgs: list[HumanMessage | AIMessage] = []
     for r in _history_window(rows, max_messages):
+        content = _trim_answer_input(r.content, max_chars=max_chars)
         if r.role is ChatRole.USER:
-            msgs.append(HumanMessage(content=r.content))
+            msgs.append(HumanMessage(content=content))
         else:
-            msgs.append(AIMessage(content=r.content))
+            msgs.append(AIMessage(content=content))
     return msgs
 
 
@@ -596,14 +669,21 @@ async def stream_answer(
     retrieval_note: str | None = None,
 ) -> AsyncIterator[str]:
     """Yields LLM token chunks as plain strings."""
+    s = get_settings()
     messages: list[Any] = [SystemMessage(content=SYSTEM_PROMPT)]
     messages.extend(_history_to_messages(history))
     if context:
-        messages.append(SystemMessage(content=f"Context:\n{context}"))
+        safe_context = _trim_answer_input(
+            context, max_chars=s.chat_answer_context_max_chars
+        )
+        messages.append(SystemMessage(content=f"Context:\n{safe_context}"))
     if rag_query:
+        safe_rag_query = _trim_answer_input(
+            rag_query, max_chars=s.chat_answer_metadata_max_chars
+        )
         messages.append(
             SystemMessage(
-                content=f"Retrieval query used to select context: {rag_query}"
+                content=f"Retrieval query used to select context: {safe_rag_query}"
             )
         )
     if query_tags and query_tags.has_signal():
@@ -620,7 +700,10 @@ async def stream_answer(
                 )
             )
         )
-    messages.append(HumanMessage(content=user_message))
+    safe_user_message = _trim_answer_input(
+        user_message, max_chars=s.chat_answer_user_message_max_chars
+    )
+    messages.append(HumanMessage(content=safe_user_message))
 
     llm = _build_llm()
     async for chunk in llm.astream(messages):

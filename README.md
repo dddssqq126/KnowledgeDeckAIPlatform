@@ -133,7 +133,7 @@ your question  ─┤  rewriter (chat-only, every turn)     │
                                   │
                         ┌─────────▼────────────┐
                         │ cross-encoder rerank │
-                        │ bge-reranker-v2-m3   │
+                        │ bge-reranker-base   │
                         │ via vLLM /score      │
                         └─────────┬────────────┘
                                   │
@@ -161,7 +161,7 @@ your question  ─┤  rewriter (chat-only, every turn)     │
 
 ### Why the rewriter runs on every turn (chat)
 
-Cross-encoder rerankers like `bge-reranker-v2-m3` are trained on natural-language queries. They score badly on:
+Cross-encoder rerankers like `bge-reranker-base` are trained on natural-language queries. They score badly on:
 
 - **Abbreviations** — query `"k8s"` directly against Kubernetes documents scores ~0.0005 (well below threshold), even though hybrid search puts the right file at the top.
 - **Single-token / single-acronym queries** — `"AWS"`, `"GPU"`, `"ML"` hit the same wall.
@@ -224,7 +224,7 @@ For the full pipeline implementation see [docs/ARCHITECTURE.md § RAG](docs/ARCH
 | LLM | vLLM (OpenAI-compatible) — default Google Gemma 4 E4B |
 | Embedding | vLLM serving BAAI/bge-m3 (1024-d dense) |
 | Sparse | dependency-light BM25-style hashing + Qdrant IDF (in-process) |
-| Reranker | vLLM `--runner pooling --convert classify` serving BAAI/bge-reranker-v2-m3 |
+| Reranker | vLLM `--runner pooling --convert classify` serving BAAI/bge-reranker-base |
 | Vectors | Qdrant 1.12+ with named vectors + RRF fusion |
 | Object store | Local filesystem (`LOCAL_STORAGE_ROOT` + `STORAGE_BUCKET`) |
 | Database | SQLite |
@@ -265,7 +265,7 @@ docker compose up qdrant presenton backend frontend
 docker compose --profile gpu up -d
 ```
 
-First run pulls the vLLM image (~9 GB) and downloads three models on first request: Gemma 4 E4B (~8 GB), bge-m3 (~2 GB), bge-reranker-v2-m3 (~570 MB). Subsequent runs are fast.
+First run pulls the vLLM image (~9 GB) and downloads three models on first request: Gemma 4 E4B (~8 GB), bge-m3 (~2 GB), bge-reranker-base. Subsequent runs are fast.
 
 ### 3. Log in
 
@@ -333,6 +333,9 @@ Everything lives in `.env`. Grouped:
 | `LLM_MODEL` | `google/gemma-4-E4B-it` | Sent in request body — must match the endpoint's served model. |
 | `LLM_MODEL_LABEL` | `Gemma 4 E4B` | Display name in Chat / Slide Maker header. Decoupled from `LLM_MODEL`. |
 | `LLM_API_KEY` | `local-dev-key` | Bearer key. For local vLLM any non-empty string works. |
+| `CHAT_ANSWER_CONTEXT_MAX_CHARS` | `60000` | Caps retrieved/attachment context sent to answer generation so pasted files do not exceed GPT-OSS 120B context. |
+| `CHAT_ANSWER_USER_MESSAGE_MAX_CHARS` | `20000` | Caps the latest user turn sent to answer generation; long text keeps head and tail. |
+| `CHAT_REWRITE_USER_MESSAGE_CHARS` | `4000` | Caps the user turn sent to the query rewriter. |
 | `VLLM_CHAT_GPU_MEMORY_UTILIZATION` | `0.70` | vLLM workspace fraction. Lower = less VRAM, smaller KV cache. |
 | `VLLM_CHAT_MAX_MODEL_LEN` | `16384` | Max context tokens. |
 
@@ -343,7 +346,7 @@ Everything lives in `.env`. Grouped:
 | Variable | Default | Notes |
 |---|---|---|
 | `EMBEDDING_MODEL` | `BAAI/bge-m3` | 1024-d dense embedding model. |
-| `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | Cross-encoder reranker. |
+| `RERANK_MODEL` | `BAAI/bge-reranker-base` | Cross-encoder reranker; 512-token pair window, so rerank inputs are capped before scoring. |
 | `RAG_DENSE_TOP_K` | `20` | How many candidates Qdrant returns before rerank. |
 | `RAG_FINAL_TOP_K` | `5` | How many chunks survive into the prompt. |
 | `RAG_MIN_SCORE` | `0.30` | Dense cosine threshold (early filter). |

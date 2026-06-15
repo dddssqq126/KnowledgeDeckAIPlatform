@@ -139,7 +139,7 @@ services:
       - hf_cache:/root/.cache/huggingface
     command:
       - --model
-      - ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
+      - ${RERANK_MODEL:-BAAI/bge-reranker-base}
       # vLLM 0.19 dropped --task. For cross-encoder rerankers we use
       # --runner pooling + --convert classify so the /score endpoint
       # exposes (query, passage) pairwise scoring.
@@ -154,7 +154,7 @@ services:
       - --gpu-memory-utilization
       - ${VLLM_RERANK_GPU_MEMORY_UTILIZATION:-0.08}
       - --max-model-len
-      - ${VLLM_RERANK_MAX_MODEL_LEN:-2048}
+      - ${VLLM_RERANK_MAX_MODEL_LEN:-512}
     deploy:
       resources:
         reservations:

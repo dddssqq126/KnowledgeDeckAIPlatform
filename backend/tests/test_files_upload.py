@@ -2,6 +2,7 @@ import io
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from openpyxl import Workbook
 
 from app.db.models import User
 
@@ -38,6 +39,18 @@ async def make_kb(http_client: AsyncClient, user: User, name: str = "K") -> int:
 PDF_BYTES = b"%PDF-1.4\n%EOF\n"
 TXT_BYTES = b"hello world\n"
 CS_BYTES = b"using System;\nclass A {}\n"
+CSV_BYTES = "名稱,值\n平台,測試\n".encode("cp950")
+
+
+def xlsx_bytes() -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Summary"
+    ws.append(["Vendor", "Teradyne"])
+    ws.append(["Limit", 42])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 @pytest.mark.asyncio
@@ -79,6 +92,37 @@ async def test_upload_cs_happy_path(http_client, alice: User) -> None:
 
 
 @pytest.mark.asyncio
+async def test_upload_xlsx_happy_path(http_client, alice: User) -> None:
+    data = xlsx_bytes()
+    kb_id = await make_kb(http_client, alice)
+    res = await http_client.post(
+        f"/knowledge-bases/{kb_id}/files",
+        files={
+            "file": (
+                "workbook.xlsx",
+                io.BytesIO(data),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+        headers=auth(alice),
+    )
+    assert res.status_code == 201
+    assert res.json()["extension"] == "xlsx"
+
+
+@pytest.mark.asyncio
+async def test_upload_csv_happy_path(http_client, alice: User) -> None:
+    kb_id = await make_kb(http_client, alice)
+    res = await http_client.post(
+        f"/knowledge-bases/{kb_id}/files",
+        files={"file": ("table.csv", io.BytesIO(CSV_BYTES), "text/csv")},
+        headers=auth(alice),
+    )
+    assert res.status_code == 201
+    assert res.json()["extension"] == "csv"
+
+
+@pytest.mark.asyncio
 async def test_upload_rejects_unknown_extension(http_client, alice: User) -> None:
     kb_id = await make_kb(http_client, alice)
     res = await http_client.post(
@@ -96,6 +140,36 @@ async def test_upload_rejects_pdf_without_magic(http_client, alice: User) -> Non
     res = await http_client.post(
         f"/knowledge-bases/{kb_id}/files",
         files={"file": ("evil.pdf", io.BytesIO(b"NOT-A-PDF"), "application/pdf")},
+        headers=auth(alice),
+    )
+    assert res.status_code == 400
+    assert res.json() == {"detail": "invalid_content"}
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_xlsx_without_zip_magic(http_client, alice: User) -> None:
+    kb_id = await make_kb(http_client, alice)
+    res = await http_client.post(
+        f"/knowledge-bases/{kb_id}/files",
+        files={
+            "file": (
+                "bad.xlsx",
+                io.BytesIO(b"NOT-XLSX"),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+        headers=auth(alice),
+    )
+    assert res.status_code == 400
+    assert res.json() == {"detail": "invalid_content"}
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_csv_with_null_byte(http_client, alice: User) -> None:
+    kb_id = await make_kb(http_client, alice)
+    res = await http_client.post(
+        f"/knowledge-bases/{kb_id}/files",
+        files={"file": ("bad.csv", io.BytesIO(b"name,value\x00bad"), "text/csv")},
         headers=auth(alice),
     )
     assert res.status_code == 400

@@ -2,7 +2,7 @@ import hashlib
 import io
 
 ALLOWED_EXTENSIONS = {
-    "txt", "pdf", "cs", "md", "docx", "pptx",
+    "txt", "pdf", "cs", "md", "docx", "pptx", "xlsx", "csv",
     "py", "html", "css",  # common code formats — treated as UTF-8 text
 }
 
@@ -11,6 +11,7 @@ ALLOWED_EXTENSIONS = {
 # the validate_content stage and rely on the parser to fail loudly if the
 # zip turns out not to be the OOXML format the extension claims.
 _ZIP_MAGIC = b"PK\x03\x04"
+_CSV_ENCODINGS = ("utf-8-sig", "utf-8", "cp950", "big5")
 
 
 class ValidationError(Exception):
@@ -41,13 +42,24 @@ def validate_content(extension: str, head: bytes) -> None:
         if not head.startswith(b"%PDF"):
             raise ValidationError("invalid_content")
         return
-    if extension in ("docx", "pptx"):
+    if extension in ("docx", "pptx", "xlsx"):
         # OOXML containers are PKZIP-wrapped XML. The PK magic alone doesn't
         # prove it's the right kind of OOXML — that's the parser's job to
         # discover and surface as an ingest failure.
         if not head.startswith(_ZIP_MAGIC):
             raise ValidationError("invalid_content")
         return
+    if extension == "csv":
+        sample = head[:1024]
+        if b"\x00" in sample:
+            raise ValidationError("invalid_content")
+        for encoding in _CSV_ENCODINGS:
+            try:
+                sample.decode(encoding, errors="strict")
+                return
+            except UnicodeDecodeError:
+                continue
+        raise ValidationError("invalid_content")
     # txt / cs / md share the text-likeness rule.
     sample = head[:1024]
     if b"\x00" in sample:

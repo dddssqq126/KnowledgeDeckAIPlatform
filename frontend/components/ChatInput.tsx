@@ -149,7 +149,7 @@ export function ChatInput({
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".pdf,.docx,.txt,.cs,.md,.py,.html,.css,.pptx"
+              accept=".pdf,.docx,.xlsx,.csv,.txt,.cs,.md,.py,.html,.css,.pptx"
               onChange={(e) => addAttachments(e.target.files)}
               className="hidden"
               disabled={disabled}

@@ -5,13 +5,18 @@ Per-format behavior:
   - pdf           : one segment per page, page_number=<1-based>
   - pptx          : one segment per slide, page_number=<slide index>
   - docx          : one segment, page_number=None (no native page concept)
+  - xlsx          : one segment per worksheet, page_number=<sheet index>
+  - csv           : one segment, page_number=None
 """
 from __future__ import annotations
 
+import csv
 import io
+from datetime import date, datetime, time
 from dataclasses import dataclass
 
 from docx import Document as DocxDocument
+from openpyxl import load_workbook
 from pptx import Presentation
 from pypdf import PdfReader
 
@@ -79,6 +84,107 @@ def _parse_pptx(data: bytes) -> list[ParsedSegment]:
     return out
 
 
+_CSV_ENCODINGS = ("utf-8-sig", "utf-8", "cp950", "big5")
+
+
+def _format_cell(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    return str(value).strip()
+
+
+def _join_non_empty_row(values: list[str]) -> str:
+    last = -1
+    for idx, value in enumerate(values):
+        if value:
+            last = idx
+    if last < 0:
+        return ""
+    return "\t".join(values[: last + 1])
+
+
+def _parse_xlsx(data: bytes) -> list[ParsedSegment]:
+    """Extract workbook text as one segment per worksheet.
+
+    Cells in each row are joined by tabs so RAG keeps table shape while still
+    embedding plain text. Formula cells use cached values when present; if a
+    workbook has no cached formula result, the formula text is used instead.
+    """
+    out: list[ParsedSegment] = []
+    values_wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    formulas_wb = load_workbook(io.BytesIO(data), read_only=True, data_only=False)
+    try:
+        for i, values_ws in enumerate(values_wb.worksheets, start=1):
+            formulas_ws = formulas_wb[values_ws.title]
+            lines: list[str] = [f"Sheet: {values_ws.title}"]
+            value_rows = values_ws.iter_rows()
+            formula_rows = formulas_ws.iter_rows()
+            for value_row, formula_row in zip(value_rows, formula_rows, strict=True):
+                cells: list[str] = []
+                for value_cell, formula_cell in zip(
+                    value_row, formula_row, strict=True
+                ):
+                    value = value_cell.value
+                    formula_value = formula_cell.value
+                    if (
+                        value is None
+                        and isinstance(formula_value, str)
+                        and formula_value.startswith("=")
+                    ):
+                        value = formula_value
+                    cells.append(_format_cell(value))
+                line = _join_non_empty_row(cells)
+                if line:
+                    lines.append(line)
+            if len(lines) > 1:
+                out.append(
+                    ParsedSegment(text="\n".join(lines), page_number=i)
+                )
+    finally:
+        values_wb.close()
+        formulas_wb.close()
+    return out
+
+
+def _decode_csv(data: bytes) -> str:
+    if b"\x00" in data[:1024]:
+        raise ValueError("csv contains null byte")
+    last_error: UnicodeDecodeError | None = None
+    for encoding in _CSV_ENCODINGS:
+        try:
+            return data.decode(encoding, errors="strict")
+        except UnicodeDecodeError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    return ""
+
+
+def _csv_dialect(text: str) -> csv.Dialect:
+    sample = text[:4096]
+    try:
+        return csv.Sniffer().sniff(sample, delimiters=",\t;|")
+    except csv.Error:
+        return csv.excel
+
+
+def _parse_csv(data: bytes) -> list[ParsedSegment]:
+    text = _decode_csv(data)
+    reader = csv.reader(io.StringIO(text), dialect=_csv_dialect(text))
+    lines: list[str] = []
+    for row in reader:
+        line = _join_non_empty_row([_format_cell(cell) for cell in row])
+        if line:
+            lines.append(line)
+    return [ParsedSegment(text="\n".join(lines), page_number=None)] if lines else []
+
+
 # Plain-text-ish formats: decoded as UTF-8 into a single segment. Includes
 # code formats — embedding them as raw source works well enough for RAG;
 # we don't strip language-specific syntax (HTML tags / Python comments).
@@ -94,4 +200,8 @@ def parse(extension: str, data: bytes) -> list[ParsedSegment]:
         return _parse_docx(data)
     if extension == "pptx":
         return _parse_pptx(data)
+    if extension == "xlsx":
+        return _parse_xlsx(data)
+    if extension == "csv":
+        return _parse_csv(data)
     raise ValueError(f"unsupported extension: {extension}")

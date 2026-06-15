@@ -43,9 +43,20 @@ class Settings(BaseSettings):
     # Keep answer generation focused on the latest turn. Older turns still
     # exist in DB, but only this many recent messages are sent to the LLM.
     chat_answer_history_messages: int = 6
+    # GPT-OSS 120B supports a large context window, but pasted files/code can
+    # still produce 500K+ character prompts. Cap only the answer-generation
+    # prompt inputs; short strings pass through unchanged.
+    chat_answer_history_message_max_chars: int = 4_000
+    chat_answer_user_message_max_chars: int = 20_000
+    chat_answer_context_max_chars: int = 60_000
+    chat_answer_metadata_max_chars: int = 4_000
+    # Parsed chat attachments are appended to answer context, but only this
+    # smaller cleaned budget is used as retrieval-query hints.
+    chat_attachment_retrieval_chars: int = 4_000
     # Query rewrite only needs enough history to resolve short follow-ups.
     chat_rewrite_history_messages: int = 4
     chat_rewrite_history_chars: int = 180
+    chat_rewrite_user_message_chars: int = 4_000
 
     embedding_base_url: str = "http://knowledgedeck_vllm_embedding:8001/v1"
     embedding_api_key: str = "local-dev-key"
@@ -54,9 +65,15 @@ class Settings(BaseSettings):
     # Batch large document embedding requests so one huge file does not create
     # a single long-running HTTP call that is likely to time out.
     embedding_batch_size: int = 32
-    # Also cap the total characters per embedding request. If a provider still
-    # rejects/times out on a batch, ingestion automatically bisects that batch.
+    # Also cap the total characters per embedding request. This is a *batch*
+    # budget for document ingestion: up to embedding_batch_size already-split
+    # chunks can be sent together, and ingestion bisects the batch if a
+    # provider still rejects/times out.
     embedding_batch_max_chars: int = 24_000
+    # Chat/RAG retrieval embeds the user's query as one input item. Pasted code
+    # can exceed bge-m3/vLLM's 8K-token item context, so cap only that single
+    # query string before calling /embeddings. Short queries return unchanged.
+    embedding_query_max_chars: int = 6_000
 
     # Local disk mode (no Qdrant server process): set qdrant_path and leave
     # qdrant_url empty. If qdrant_path is empty, url mode is used.
@@ -88,11 +105,24 @@ class Settings(BaseSettings):
     rag_tag_match_boost: float = 0.05
     rag_min_score: float = 0.30
     rag_rerank_min_score: float = 0.10
+    # BAAI/bge-reranker-base is a 512-token cross-encoder. These are
+    # character budgets (not token budgets) that keep each (query, passage)
+    # pair safely below that small window while preserving one /score call for
+    # the normal 40-candidate rerank set. Longer chunks are trimmed only for
+    # rerank scoring; final answer context still uses the selected chunk text.
+    rag_rerank_query_max_chars: int = 256
+    rag_rerank_passage_max_chars: int = 1_000
+    rag_rerank_batch_max_chars: int = 64_000
+    # Deep retrieval's coverage judge is also an LLM call; bound its prompt so
+    # pasted code or oversized selected chunks cannot exceed chat model context.
+    rag_coverage_user_message_max_chars: int = 8_000
+    rag_coverage_query_max_chars: int = 4_000
+    rag_coverage_context_max_chars: int = 60_000
 
     # Reranker (cross-encoder) — separate vLLM service running in score mode.
     rerank_base_url: str = "http://knowledgedeck_vllm_rerank:8000/v1"
     rerank_api_key: str = "local-dev-key"
-    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_model: str = "BAAI/bge-reranker-base"
 
     # Presenton (PPTX rendering) — runs as a separate compose service. The
     # shared volume mounted at presenton_data_root lets backend read PPTX
