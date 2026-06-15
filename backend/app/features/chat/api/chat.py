@@ -12,6 +12,7 @@ import json
 import logging
 import secrets
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -46,6 +47,14 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 MAX_CHAT_ATTACHMENTS = 5
 CHAT_ATTACHMENT_CONTEXT_CHARS = 30_000
+
+
+@dataclass(frozen=True)
+class AttachmentContext:
+    """Parsed chat attachment text split by answer vs retrieval use."""
+
+    answer_context: str = ""
+    retrieval_text: str = ""
 
 
 class SessionCreate(BaseModel):
@@ -92,7 +101,7 @@ class ShareOut(BaseModel):
 
 class StreamRequest(BaseModel):
     session_id: int
-    message: str = Field(min_length=1)
+    message: str = ""
     use_rag: bool = False
     kb_ids: list[int] | None = None
     deep_mode: bool = False
@@ -533,6 +542,21 @@ def _form_or_payload(form: Any, payload: dict[str, Any], *names: str) -> Any:
     return None
 
 
+def _attachment_only_message() -> str:
+    return "請閱讀我附加的檔案內容，並用它作為查詢線索找出相關 RAG 文件後回答。"
+
+
+def _normalize_stream_body(body: StreamRequest, uploads: list[Any]) -> StreamRequest:
+    if body.message.strip():
+        return body
+    if uploads:
+        return body.model_copy(update={"message": _attachment_only_message()})
+    raise HTTPException(
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail="message_or_attachment_required",
+    )
+
+
 async def _parse_stream_request(request: Request) -> tuple[StreamRequest, list[Any]]:
     content_type = request.headers.get("content-type", "").lower()
     if "multipart/form-data" in content_type:
@@ -565,7 +589,8 @@ async def _parse_stream_request(request: Request) -> tuple[StreamRequest, list[A
             uploads.extend(
                 item for item in form.getlist(field_name) if hasattr(item, "filename")
             )
-        return body, uploads[:MAX_CHAT_ATTACHMENTS]
+        uploads = uploads[:MAX_CHAT_ATTACHMENTS]
+        return _normalize_stream_body(body, uploads), uploads
 
     try:
         body = StreamRequest.model_validate(await request.json())
@@ -573,7 +598,7 @@ async def _parse_stream_request(request: Request) -> tuple[StreamRequest, list[A
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_stream_request"
         ) from exc
-    return body, []
+    return _normalize_stream_body(body, []), []
 
 
 async def _save_and_build_attachment_context(
@@ -583,15 +608,17 @@ async def _save_and_build_attachment_context(
     owner_user_id: int,
     session_id: int,
     message_id: int,
-) -> str:
+) -> AttachmentContext:
     if not uploads:
-        return ""
+        return AttachmentContext()
 
     settings = get_settings()
     storage = get_storage_client()
     await storage.ensure_bucket()
     blocks: list[str] = ["User-uploaded files for this chat turn:"]
+    retrieval_blocks: list[str] = []
     remaining_chars = CHAT_ATTACHMENT_CONTEXT_CHARS
+    remaining_retrieval_chars = max(0, settings.chat_attachment_retrieval_chars)
 
     for index, upload in enumerate(uploads, start=1):
         filename = upload.filename or f"attachment-{index}"
@@ -673,7 +700,20 @@ async def _save_and_build_attachment_context(
             remaining_chars -= len(text)
         blocks.append(f"[Attachment {index}] {filename} (saved)\n{text}")
 
-    return "\n\n".join(blocks)
+        if remaining_retrieval_chars > 0:
+            retrieval_text = f"Filename: {filename}\n{text}"
+            if len(retrieval_text) > remaining_retrieval_chars:
+                retrieval_text = retrieval_text[:remaining_retrieval_chars].rstrip()
+                remaining_retrieval_chars = 0
+            else:
+                remaining_retrieval_chars -= len(retrieval_text)
+            if retrieval_text:
+                retrieval_blocks.append(retrieval_text)
+
+    return AttachmentContext(
+        answer_context="\n\n".join(blocks),
+        retrieval_text="\n\n".join(retrieval_blocks),
+    )
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
@@ -741,7 +781,10 @@ async def stream_chat(
                     # code-aware rewriter instead of the natural-language
                     # document rewriter.
                     rag_query = chat_service.rewrite_for_code_retrieval(
-                        history=history, user_message=user_message, intent=code_intent
+                        history=history,
+                        user_message=user_message,
+                        intent=code_intent,
+                        attachment_retrieval_text=attachment_context.retrieval_text,
                     )
                 else:
                     # Multi-turn follow-ups ("and Python?", "what about that one?")
@@ -749,7 +792,9 @@ async def stream_chat(
                     # off-topic. Rewriter resolves references against history into
                     # a self-contained query before we hit the vector store.
                     rag_query = await chat_service.rewrite_for_retrieval(
-                        history=history, user_message=user_message
+                        history=history,
+                        user_message=user_message,
+                        attachment_retrieval_text=attachment_context.retrieval_text,
                     )
                 query_tags = chat_service.detect_query_tags(user_message, rag_query)
                 if deep_mode:
@@ -773,11 +818,11 @@ async def stream_chat(
                         deep_mode=False,
                     )
 
-            if attachment_context:
+            if attachment_context.answer_context:
                 context = (
-                    f"{context}\n\n{attachment_context}"
+                    f"{context}\n\n{attachment_context.answer_context}"
                     if context
-                    else attachment_context
+                    else attachment_context.answer_context
                 )
 
             collected: list[str] = []

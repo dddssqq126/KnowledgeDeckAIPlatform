@@ -36,6 +36,58 @@ async def test_rewrite_for_retrieval_builds_symbol_query() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_rewrite_for_retrieval_includes_attachment_hints(monkeypatch) -> None:
+    captured = {}
+
+    class _FakeRewriter:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def ainvoke(self, messages):
+            captured["prompt"] = messages[-1].content
+            return type(
+                "Result",
+                (),
+                {"content": "Find ALM-42 UltraFLEX alarm documentation"},
+            )()
+
+    monkeypatch.setattr(chat_service, "ChatOpenAI", _FakeRewriter)
+
+    query = await rewrite_for_retrieval(
+        [],
+        "請找相關文件",
+        attachment_retrieval_text="Filename: alarm.txt\nUltraFLEX ALM-42 vector load failure",
+    )
+
+    assert query == "Find ALM-42 UltraFLEX alarm documentation"
+    assert "Uploaded file text for retrieval hints" in captured["prompt"]
+    assert "Filename: alarm.txt" in captured["prompt"]
+    assert "ALM-42" in captured["prompt"]
+
+
+
+
+@pytest.mark.asyncio
+async def test_rewrite_for_retrieval_fallback_keeps_attachment_hints(monkeypatch) -> None:
+    class _FailingRewriter:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def ainvoke(self, _messages):
+            raise RuntimeError("rewriter unavailable")
+
+    monkeypatch.setattr(chat_service, "ChatOpenAI", _FailingRewriter)
+
+    query = await rewrite_for_retrieval(
+        [],
+        "",
+        attachment_retrieval_text="Filename: alarms.csv\nUltraFLEX ALM-42 vector load failure",
+    )
+
+    assert "Filename: alarms.csv" in query
+    assert "ALM-42" in query
+
 @pytest.mark.parametrize(
     ("message", "expected"),
     [
