@@ -3,6 +3,7 @@ import pytest
 from app.db.models import ChatMessage, ChatRole
 from app.features.chat.services import chat_service
 from app.features.chat.services.chat_service import (
+    build_rag_query_with_attachment,
     detect_query_tags,
     detect_symbol_lookup,
     rewrite_for_retrieval,
@@ -24,6 +25,18 @@ from app.features.chat.services.chat_service import (
 )
 def test_detect_symbol_lookup(message: str, expected: str | None) -> None:
     assert detect_symbol_lookup(message) == expected
+
+
+def test_build_rag_query_with_attachment_combines_question_and_input() -> None:
+    query = build_rag_query_with_attachment(
+        "How should I fix this alarm?",
+        "Filename: alarms.csv\nUltraFLEX ALM-42 vector load failure",
+    )
+
+    assert query.startswith("How should I fix this alarm?")
+    assert "Uploaded input data for RAG search:" in query
+    assert "Filename: alarms.csv" in query
+    assert "ALM-42" in query
 
 
 @pytest.mark.asyncio

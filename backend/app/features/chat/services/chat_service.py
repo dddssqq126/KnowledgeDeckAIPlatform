@@ -533,20 +533,41 @@ def _symbol_lookup_query(symbol: str) -> str:
     return _SYMBOL_QUERY_TEMPLATE.format(symbol=symbol)
 
 
-def _fallback_retrieval_query(user_message: str, attachment_retrieval_text: str) -> str:
-    """Fallback query that preserves uploaded-file terms if rewrite fails."""
-    user_message = user_message.strip()
+def build_rag_query_with_attachment(
+    base_query: str, attachment_retrieval_text: str
+) -> str:
+    """Combine the user/rewrite query and parsed input text for RAG search.
+
+    This is the final query sent to embeddings/Qdrant. It intentionally keeps
+    uploaded input data in the retrieval query rather than using it only as an
+    LLM rewrite hint, so RAG candidate selection sees both the user's question
+    and the uploaded file's concrete terms.
+    """
+    base_query = base_query.strip()
     attachment_retrieval_text = attachment_retrieval_text.strip()
     if not attachment_retrieval_text:
-        return user_message
+        return base_query
+
+    # Fallback queries already include this marker; avoid duplicating the same
+    # attachment text when a rewriter failed and returned the safe fallback.
+    if "Uploaded file retrieval hints:" in base_query:
+        return base_query
 
     s = get_settings()
     safe_attachment_text = _trim_answer_input(
         attachment_retrieval_text, max_chars=s.chat_attachment_retrieval_chars
     )
-    if not user_message:
+    if not base_query:
         return safe_attachment_text
-    return f"{user_message}\n\nUploaded file retrieval hints:\n{safe_attachment_text}"
+    return f"{base_query}\n\nUploaded input data for RAG search:\n{safe_attachment_text}"
+
+
+def _fallback_retrieval_query(user_message: str, attachment_retrieval_text: str) -> str:
+    """Fallback query that preserves uploaded-file terms if rewrite fails."""
+    user_message = user_message.strip()
+    if not attachment_retrieval_text.strip():
+        return user_message
+    return build_rag_query_with_attachment(user_message, attachment_retrieval_text)
 
 
 async def rewrite_for_retrieval(

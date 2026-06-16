@@ -198,7 +198,11 @@ async def test_chat_stream_uses_attachment_text_as_retrieval_hint(
     assert rewrite_kwargs["user_message"] == "請根據上傳的錯誤找相關文件"
     assert "Filename: alarm.txt" in rewrite_kwargs["attachment_retrieval_text"]
     assert "ALM-42" in rewrite_kwargs["attachment_retrieval_text"]
-    assert captured["normal_kwargs"]["query"] == "query with uploaded alarm ALM-42"
+    rag_query = captured["normal_kwargs"]["query"]
+    assert rag_query.startswith("query with uploaded alarm ALM-42")
+    assert "Uploaded input data for RAG search:" in rag_query
+    assert "Filename: alarm.txt" in rag_query
+    assert "ALM-42" in rag_query
     assert captured["answer_context"].startswith("kb context")
     assert "User-uploaded files for this chat turn:" in captured["answer_context"]
     assert "ALM-42" in captured["answer_context"]
@@ -258,11 +262,15 @@ async def test_chat_stream_empty_first_message_with_csv_attachment_uses_rag(
 
     assert res.status_code == 200
     rewrite_kwargs = captured["rewrite_kwargs"]
-    assert rewrite_kwargs["user_message"]
+    assert rewrite_kwargs["user_message"].startswith("請根據我附加的檔案內容做 RAG 搜尋")
     assert "Filename: alarms.csv" in rewrite_kwargs["attachment_retrieval_text"]
     assert "UltraFLEX" in rewrite_kwargs["attachment_retrieval_text"]
     assert "ALM-42" in rewrite_kwargs["attachment_retrieval_text"]
-    assert captured["normal_kwargs"]["query"] == "UltraFLEX ALM-42 CSV failure"
+    rag_query = captured["normal_kwargs"]["query"]
+    assert rag_query.startswith("UltraFLEX ALM-42 CSV failure")
+    assert "Uploaded input data for RAG search:" in rag_query
+    assert "Filename: alarms.csv" in rag_query
+    assert "ALM-42" in rag_query
     assert "csv matched kb context" in captured["answer_context"]
     assert "alarms.csv" in captured["answer_context"]
 

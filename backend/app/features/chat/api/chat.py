@@ -543,14 +543,19 @@ def _form_or_payload(form: Any, payload: dict[str, Any], *names: str) -> Any:
 
 
 def _attachment_only_message() -> str:
-    return "請閱讀我附加的檔案內容，並用它作為查詢線索找出相關 RAG 文件後回答。"
+    return (
+        "請根據我附加的檔案內容做 RAG 搜尋，並根據上傳內容與相關 RAG "
+        "文件整理一份完整摘要。"
+    )
 
 
 def _normalize_stream_body(body: StreamRequest, uploads: list[Any]) -> StreamRequest:
     if body.message.strip():
         return body
     if uploads:
-        return body.model_copy(update={"message": _attachment_only_message()})
+        return body.model_copy(
+            update={"message": _attachment_only_message(), "use_rag": True}
+        )
     raise HTTPException(
         status.HTTP_422_UNPROCESSABLE_ENTITY,
         detail="message_or_attachment_required",
@@ -796,6 +801,9 @@ async def stream_chat(
                         user_message=user_message,
                         attachment_retrieval_text=attachment_context.retrieval_text,
                     )
+                rag_query = chat_service.build_rag_query_with_attachment(
+                    rag_query, attachment_context.retrieval_text
+                )
                 query_tags = chat_service.detect_query_tags(user_message, rag_query)
                 if deep_mode:
                     rag_result = await rag.retrieve_context_checked(
