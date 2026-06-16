@@ -20,6 +20,36 @@ def auth(user: User) -> dict[str, str]:
     return {"Authorization": f"Bearer u_{user.id}"}
 
 
+
+def test_attachment_retrieval_text_preserves_head_and_tail_for_long_files() -> None:
+    text = (
+        "HEAD important product UltraFLEX\n"
+        + ("middle noise\n" * 200)
+        + "TAIL important alarm ALM-42"
+    )
+
+    retrieval_text = chat_api._format_attachment_retrieval_text(
+        filename="long.csv",
+        text=text,
+        max_chars=220,
+    )
+
+    assert retrieval_text.startswith("Filename: long.csv")
+    assert "HEAD important product UltraFLEX" in retrieval_text
+    assert "TAIL important alarm ALM-42" in retrieval_text
+    assert "middle omitted from retrieval query" in retrieval_text
+    assert len(retrieval_text) <= 220
+
+
+def test_attachment_only_message_requests_structured_summary() -> None:
+    message = chat_api._attachment_only_message()
+
+    assert "完整摘要" in message
+    assert "RAG 搜尋" in message
+    assert "檔案主旨" in message
+    assert "建議下一步" in message
+
+
 @pytest.mark.asyncio
 async def test_chat_stream_deep_mode_uses_checked_retrieval(
     http_client, db_session, alice: User, monkeypatch

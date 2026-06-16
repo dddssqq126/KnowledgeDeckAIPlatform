@@ -47,6 +47,41 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 MAX_CHAT_ATTACHMENTS = 5
 CHAT_ATTACHMENT_CONTEXT_CHARS = 30_000
+_ATTACHMENT_RETRIEVAL_TRUNCATION_MARKER = (
+    "\n...[middle omitted from retrieval query because attachment is long]...\n"
+)
+
+
+def _trim_attachment_retrieval_text(text: str, *, max_chars: int) -> str:
+    """Trim long parsed input while preserving both beginning and end.
+
+    RAG search fails when a huge uploaded file is used verbatim as a query.
+    Keeping both ends gives the vector/sparse search important title/header
+    terms from the top and conclusions/errors/tail data from the bottom.
+    """
+    text = text.strip()
+    max_chars = max(0, max_chars)
+    if max_chars == 0 or not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    marker = _ATTACHMENT_RETRIEVAL_TRUNCATION_MARKER
+    if max_chars <= len(marker):
+        return text[:max_chars].rstrip()
+    head_chars = (max_chars - len(marker)) // 2
+    tail_chars = max_chars - len(marker) - head_chars
+    return f"{text[:head_chars].rstrip()}{marker}{text[-tail_chars:].lstrip()}"
+
+
+def _format_attachment_retrieval_text(
+    *, filename: str, text: str, max_chars: int
+) -> str:
+    prefix = f"Filename: {filename}\n"
+    max_chars = max(0, max_chars)
+    if max_chars <= len(prefix):
+        return prefix[:max_chars].rstrip()
+    body = _trim_attachment_retrieval_text(text, max_chars=max_chars - len(prefix))
+    return f"{prefix}{body}".strip()
 
 
 @dataclass(frozen=True)
@@ -544,8 +579,11 @@ def _form_or_payload(form: Any, payload: dict[str, Any], *names: str) -> Any:
 
 def _attachment_only_message() -> str:
     return (
-        "請根據我附加的檔案內容做 RAG 搜尋，並根據上傳內容與相關 RAG "
-        "文件整理一份完整摘要。"
+        "請把我上傳的檔案當作主要材料，先用檔案中的關鍵名詞、錯誤碼、"
+        "產品/平台、表格欄位與結論做 RAG 搜尋；再根據上傳內容與檢索到的"
+        "相關文件，整理一份完整摘要。請包含：1. 檔案主旨，2. 重要重點/"
+        "欄位或章節，3. 關鍵數據或錯誤訊號，4. 與 RAG 文件對應的補充背景，"
+        "5. 風險/注意事項，6. 建議下一步。"
     )
 
 
@@ -689,12 +727,23 @@ async def _save_and_build_attachment_context(
                 else "content"
             )
             parts.append(f"--- {label} ---\n{segment.text.strip()}")
-        text = "\n\n".join(parts).strip()
+        full_text = "\n\n".join(parts).strip()
+        if remaining_retrieval_chars > 0:
+            retrieval_text = _format_attachment_retrieval_text(
+                filename=filename,
+                text=full_text,
+                max_chars=remaining_retrieval_chars,
+            )
+            remaining_retrieval_chars -= len(retrieval_text)
+            if retrieval_text:
+                retrieval_blocks.append(retrieval_text)
+
         if remaining_chars <= 0:
             blocks.append(
                 f"[Attachment {index}] {filename}: saved, but omitted from context because attachment context limit was reached"
             )
             continue
+        text = full_text
         if len(text) > remaining_chars:
             text = (
                 text[:remaining_chars].rstrip()
@@ -704,16 +753,6 @@ async def _save_and_build_attachment_context(
         else:
             remaining_chars -= len(text)
         blocks.append(f"[Attachment {index}] {filename} (saved)\n{text}")
-
-        if remaining_retrieval_chars > 0:
-            retrieval_text = f"Filename: {filename}\n{text}"
-            if len(retrieval_text) > remaining_retrieval_chars:
-                retrieval_text = retrieval_text[:remaining_retrieval_chars].rstrip()
-                remaining_retrieval_chars = 0
-            else:
-                remaining_retrieval_chars -= len(retrieval_text)
-            if retrieval_text:
-                retrieval_blocks.append(retrieval_text)
 
     return AttachmentContext(
         answer_context="\n\n".join(blocks),
