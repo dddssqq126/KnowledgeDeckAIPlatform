@@ -232,6 +232,47 @@ def test_history_to_messages_trims_each_message(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_stream_answer_marks_history_window_for_answer_prompt(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    captured = {}
+
+    class _FakeLLM:
+        async def astream(self, messages):
+            captured["messages"] = messages
+            yield type("Chunk", (), {"content": "ok"})()
+
+    monkeypatch.setattr(
+        chat_service,
+        "get_settings",
+        lambda: Settings(chat_answer_history_messages=2),
+    )
+    monkeypatch.setattr(chat_service, "_build_llm", lambda: _FakeLLM())
+
+    chunks = [
+        chunk
+        async for chunk in chat_service.stream_answer(
+            history=[
+                _message(ChatRole.USER, "old user"),
+                _message(ChatRole.ASSISTANT, "old assistant"),
+                _message(ChatRole.USER, "recent user"),
+                _message(ChatRole.ASSISTANT, "recent assistant"),
+            ],
+            user_message="What about that one?",
+            context="",
+        )
+    ]
+
+    assert chunks == ["ok"]
+    messages = captured["messages"]
+    contents = [m.content for m in messages]
+    assert "Recent conversation history is included below" in contents[1]
+    assert contents[2:4] == ["recent user", "recent assistant"]
+    assert "End of recent conversation history" in contents[4]
+    assert contents[-1] == "What about that one?"
+
+
+@pytest.mark.asyncio
 async def test_stream_answer_trims_context_query_and_user_message(monkeypatch) -> None:
     from app.core.config import Settings
 

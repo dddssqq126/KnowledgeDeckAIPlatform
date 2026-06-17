@@ -709,7 +709,27 @@ async def stream_answer(
     """Yields LLM token chunks as plain strings."""
     s = get_settings()
     messages: list[Any] = [SystemMessage(content=SYSTEM_PROMPT)]
-    messages.extend(_history_to_messages(history))
+    history_messages = _history_to_messages(history)
+    if history_messages:
+        messages.append(
+            SystemMessage(
+                content=(
+                    "Recent conversation history is included below. Use it to "
+                    "resolve explicit follow-up references, pronouns, and "
+                    "previously stated user preferences."
+                )
+            )
+        )
+        messages.extend(history_messages)
+        messages.append(
+            SystemMessage(
+                content=(
+                    "End of recent conversation history. Answer the latest user "
+                    "message next; do not ignore the history when the latest "
+                    "message depends on earlier turns."
+                )
+            )
+        )
     if context:
         safe_context = _trim_answer_input(
             context, max_chars=s.chat_answer_context_max_chars
