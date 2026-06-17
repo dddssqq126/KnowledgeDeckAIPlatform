@@ -27,6 +27,23 @@ def test_detect_symbol_lookup(message: str, expected: str | None) -> None:
     assert detect_symbol_lookup(message) == expected
 
 
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("請 debug 這個 error", None),
+        ("哪個 function 負責登入？", None),
+        ("請寫 unit test", None),
+        ("```python\ndef parse_token(x):\n    return x\n```", chat_service.CODE_INTENT_SNIPPET),
+        ("const value = parseToken(input)", chat_service.CODE_INTENT_SNIPPET),
+        ("from app.main import create_app", chat_service.CODE_INTENT_SNIPPET),
+    ],
+)
+def test_detect_code_assist_intent_only_matches_code_snippets(
+    message: str, expected: str | None
+) -> None:
+    assert chat_service.detect_code_assist_intent(message) == expected
+
+
 def test_build_rag_query_with_attachment_combines_question_and_input() -> None:
     query = build_rag_query_with_attachment(
         "How should I fix this alarm?",
@@ -77,6 +94,54 @@ async def test_rewrite_for_retrieval_includes_attachment_hints(monkeypatch) -> N
     assert "Uploaded file text for retrieval hints" in captured["prompt"]
     assert "Filename: alarm.txt" in captured["prompt"]
     assert "ALM-42" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_rewrite_for_retrieval_prompt_preserves_history_meaning(
+    monkeypatch,
+) -> None:
+    from app.core.config import Settings
+
+    captured = {}
+
+    class _FakeRewriter:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def ainvoke(self, messages):
+            captured["system"] = messages[0].content
+            captured["prompt"] = messages[-1].content
+            return type(
+                "Result",
+                (),
+                {"content": "Compare UltraFLEX calibration BKM and V93000"},
+            )()
+
+    monkeypatch.setattr(chat_service, "ChatOpenAI", _FakeRewriter)
+    monkeypatch.setattr(
+        chat_service,
+        "get_settings",
+        lambda: Settings(chat_rewrite_history_messages=2),
+    )
+
+    query = await rewrite_for_retrieval(
+        [
+            _message(ChatRole.USER, "old topic"),
+            _message(ChatRole.ASSISTANT, "old answer"),
+            _message(ChatRole.USER, "UltraFLEX calibration BKM"),
+            _message(ChatRole.ASSISTANT, "Use the production calibration checklist"),
+        ],
+        "那 V93000 呢？",
+    )
+
+    assert query == "Compare UltraFLEX calibration BKM and V93000"
+    assert "active topic from history is preserved" in captured["system"]
+    assert "Carry forward relevant entities" in captured["system"]
+    assert "Recent conversation history to preserve" in captured["prompt"]
+    assert "UltraFLEX calibration BKM" in captured["prompt"]
+    assert "old topic" not in captured["prompt"]
+    assert "Latest user question" in captured["prompt"]
+    assert "那 V93000 呢？" in captured["prompt"]
 
 
 
