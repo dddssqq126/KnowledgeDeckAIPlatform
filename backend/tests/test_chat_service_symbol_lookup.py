@@ -79,6 +79,54 @@ async def test_rewrite_for_retrieval_includes_attachment_hints(monkeypatch) -> N
     assert "ALM-42" in captured["prompt"]
 
 
+@pytest.mark.asyncio
+async def test_rewrite_for_retrieval_prompt_preserves_history_meaning(
+    monkeypatch,
+) -> None:
+    from app.core.config import Settings
+
+    captured = {}
+
+    class _FakeRewriter:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def ainvoke(self, messages):
+            captured["system"] = messages[0].content
+            captured["prompt"] = messages[-1].content
+            return type(
+                "Result",
+                (),
+                {"content": "Compare UltraFLEX calibration BKM and V93000"},
+            )()
+
+    monkeypatch.setattr(chat_service, "ChatOpenAI", _FakeRewriter)
+    monkeypatch.setattr(
+        chat_service,
+        "get_settings",
+        lambda: Settings(chat_rewrite_history_messages=2),
+    )
+
+    query = await rewrite_for_retrieval(
+        [
+            _message(ChatRole.USER, "old topic"),
+            _message(ChatRole.ASSISTANT, "old answer"),
+            _message(ChatRole.USER, "UltraFLEX calibration BKM"),
+            _message(ChatRole.ASSISTANT, "Use the production calibration checklist"),
+        ],
+        "那 V93000 呢？",
+    )
+
+    assert query == "Compare UltraFLEX calibration BKM and V93000"
+    assert "active topic from history is preserved" in captured["system"]
+    assert "Carry forward relevant entities" in captured["system"]
+    assert "Recent conversation history to preserve" in captured["prompt"]
+    assert "UltraFLEX calibration BKM" in captured["prompt"]
+    assert "old topic" not in captured["prompt"]
+    assert "Latest user question" in captured["prompt"]
+    assert "那 V93000 呢？" in captured["prompt"]
+
+
 
 
 @pytest.mark.asyncio
@@ -229,6 +277,47 @@ def test_history_to_messages_trims_each_message(monkeypatch) -> None:
     assert messages[0].content.startswith("HEAD")
     assert messages[0].content.endswith("TAIL")
     assert messages[1].content == "short answer"
+
+
+@pytest.mark.asyncio
+async def test_stream_answer_marks_history_window_for_answer_prompt(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    captured = {}
+
+    class _FakeLLM:
+        async def astream(self, messages):
+            captured["messages"] = messages
+            yield type("Chunk", (), {"content": "ok"})()
+
+    monkeypatch.setattr(
+        chat_service,
+        "get_settings",
+        lambda: Settings(chat_answer_history_messages=2),
+    )
+    monkeypatch.setattr(chat_service, "_build_llm", lambda: _FakeLLM())
+
+    chunks = [
+        chunk
+        async for chunk in chat_service.stream_answer(
+            history=[
+                _message(ChatRole.USER, "old user"),
+                _message(ChatRole.ASSISTANT, "old assistant"),
+                _message(ChatRole.USER, "recent user"),
+                _message(ChatRole.ASSISTANT, "recent assistant"),
+            ],
+            user_message="What about that one?",
+            context="",
+        )
+    ]
+
+    assert chunks == ["ok"]
+    messages = captured["messages"]
+    contents = [m.content for m in messages]
+    assert "Recent conversation history is included below" in contents[1]
+    assert contents[2:4] == ["recent user", "recent assistant"]
+    assert "End of recent conversation history" in contents[4]
+    assert contents[-1] == "What about that one?"
 
 
 @pytest.mark.asyncio

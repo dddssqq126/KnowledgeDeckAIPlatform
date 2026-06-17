@@ -441,15 +441,23 @@ _REWRITE_SYSTEM = (
     "and call sites.\n\n"
     "You may receive:\n"
     "- A first-turn question (no conversation history above).\n"
-    "- A follow-up question that uses pronouns ('that', 'it', 'this "
-    "one') or elliptical references ('and Python?') that only make sense "
-    "relative to recent user turns.\n\n"
+    "- Recent conversation history that carries the active topic, compared "
+    "entities, filters, constraints, and user preferences from prior turns.\n"
+    "- A follow-up question that may use pronouns ('that', 'it', 'this "
+    "one'), elliptical references ('and Python?'), or short continuation "
+    "requests ('compare them', 'more detail', 'same for V93000') that only "
+    "make sense when the active topic from history is preserved.\n\n"
     "Apply these rules in order:\n"
-    "1. Use history only when the latest question explicitly depends on it; "
-    "otherwise ignore history and keep the query focused on the latest question.\n"
-    "2. Resolve pronouns / references / ellipsis against recent history only "
-    "when needed.\n"
-    "3. Replace technical abbreviations with their full canonical form. "
+    "1. Preserve the active subject from recent history when the latest "
+    "question is a follow-up, continuation, comparison, or otherwise too "
+    "short to stand alone. Carry forward relevant entities, product names, "
+    "document scope, constraints, and user intent into the rewritten query.\n"
+    "2. Resolve pronouns / references / ellipsis against recent history. "
+    "Do not output vague placeholders like 'that', 'it', 'this one', "
+    "'same thing', or 'them' when history identifies the concrete subject.\n"
+    "3. If the latest question is clearly a brand-new topic, ignore unrelated "
+    "history and keep the query focused on the latest question.\n"
+    "4. Replace technical abbreviations with their full canonical form. "
     "Drop the abbreviation entirely — do NOT keep it in parentheses, "
     "because parenthetical noise lowers cross-encoder rerank scores. "
     "Examples:\n"
@@ -458,12 +466,12 @@ _REWRITE_SYSTEM = (
     "   gpu -> graphics processing unit\n"
     "   ml  -> machine learning\n"
     "   db  -> database\n"
-    "4. If the question is a single bare term (one word or one acronym), "
+    "5. If the question is a single bare term (one word or one acronym), "
     "reformulate it into a natural question. Examples:\n"
     "   'Kubernetes'  -> 'What is Kubernetes?'\n"
     "   'embeddings'  -> 'What are embeddings?'\n"
     "   'k8s'         -> 'What is Kubernetes?'\n"
-    "5. If the question is already a complete natural-language question "
+    "6. If the question is already a complete natural-language question "
     "with no abbreviations and no references to resolve, output it "
     "unchanged.\n\n"
     "Output: ONE LINE. The rewritten query only. No quotation marks. No "
@@ -626,9 +634,11 @@ async def rewrite_for_retrieval(
             user_message, max_chars=s.chat_rewrite_user_message_chars
         )
         prompt = (
-            "Conversation history:\n"
+            "Recent conversation history to preserve for follow-up resolution:\n"
             + "\n".join(transcript_lines)
-            + f"\n\nMost recent question:\n{safe_user_message}"
+            + "\n\nLatest user question. Rewrite it as a standalone retrieval "
+            "query while preserving any active topic, entities, constraints, "
+            f"and intent implied by the history above:\n{safe_user_message}"
             + attachment_section
             + "\n\nStandalone query:"
         )
@@ -709,7 +719,27 @@ async def stream_answer(
     """Yields LLM token chunks as plain strings."""
     s = get_settings()
     messages: list[Any] = [SystemMessage(content=SYSTEM_PROMPT)]
-    messages.extend(_history_to_messages(history))
+    history_messages = _history_to_messages(history)
+    if history_messages:
+        messages.append(
+            SystemMessage(
+                content=(
+                    "Recent conversation history is included below. Use it to "
+                    "resolve explicit follow-up references, pronouns, and "
+                    "previously stated user preferences."
+                )
+            )
+        )
+        messages.extend(history_messages)
+        messages.append(
+            SystemMessage(
+                content=(
+                    "End of recent conversation history. Answer the latest user "
+                    "message next; do not ignore the history when the latest "
+                    "message depends on earlier turns."
+                )
+            )
+        )
     if context:
         safe_context = _trim_answer_input(
             context, max_chars=s.chat_answer_context_max_chars
