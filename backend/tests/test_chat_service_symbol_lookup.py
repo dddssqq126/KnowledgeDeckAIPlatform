@@ -27,6 +27,23 @@ def test_detect_symbol_lookup(message: str, expected: str | None) -> None:
     assert detect_symbol_lookup(message) == expected
 
 
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("請 debug 這個 error", None),
+        ("哪個 function 負責登入？", None),
+        ("請寫 unit test", None),
+        ("```python\ndef parse_token(x):\n    return x\n```", chat_service.CODE_INTENT_SNIPPET),
+        ("const value = parseToken(input)", chat_service.CODE_INTENT_SNIPPET),
+        ("from app.main import create_app", chat_service.CODE_INTENT_SNIPPET),
+    ],
+)
+def test_detect_code_assist_intent_only_matches_code_snippets(
+    message: str, expected: str | None
+) -> None:
+    assert chat_service.detect_code_assist_intent(message) == expected
+
+
 def test_build_rag_query_with_attachment_combines_question_and_input() -> None:
     query = build_rag_query_with_attachment(
         "How should I fix this alarm?",

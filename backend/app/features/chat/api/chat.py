@@ -154,76 +154,10 @@ class MessageFeedbackOut(BaseModel):
 
 
 def _detect_code_assist_intent(message: str) -> str | None:
-    """Return a short intent label when the request looks code-related."""
-    text = message.lower()
-    code_markers = (
-        "```",
-        "`",
-        ".py",
-        ".ts",
-        ".tsx",
-        ".js",
-        ".jsx",
-        "function",
-        "class",
-        "method",
-        "api endpoint",
-        "stack trace",
-        "traceback",
-        "exception",
-        "程式碼",
-        "代码",
-        "函式",
-        "函数",
-        "類別",
-        "类",
-    )
-    code_actions = (
-        "explain",
-        "review",
-        "fix",
-        "debug",
-        "refactor",
-        "implement",
-        "modify",
-        "change",
-        "update",
-        "write",
-        "generate",
-        "test",
-        "說明",
-        "解释",
-        "修復",
-        "修复",
-        "除錯",
-        "调试",
-        "重構",
-        "重构",
-        "實作",
-        "实现",
-        "修改",
-        "更新",
-        "撰寫",
-        "生成",
-        "測試",
-        "测试",
-    )
-    if not any(marker in text for marker in code_markers):
+    """Return a short label only when the request contains pasted code."""
+    if chat_service.detect_code_assist_intent(message) is None:
         return None
-    if "debug" in text or "traceback" in text or "exception" in text or "除錯" in text:
-        return "debug or fix code"
-    if "refactor" in text or "重構" in text or "重构" in text:
-        return "refactor code"
-    if any(
-        action in text
-        for action in ("implement", "write", "generate", "實作", "实现", "撰寫", "生成")
-    ):
-        return "implement code"
-    if any(action in text for action in ("review", "explain", "說明", "解释")):
-        return "explain or review code"
-    if any(action in text for action in code_actions):
-        return "modify code"
-    return "general code assistance"
+    return "code snippet assistance"
 
 
 def _session_out(s: ChatSession) -> SessionOut:
