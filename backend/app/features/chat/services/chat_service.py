@@ -28,7 +28,9 @@ from app.features.rag.services import tagger
 
 logger = logging.getLogger(__name__)
 
-_ANSWER_TRUNCATION_MARKER = "\n...[truncated before answer generation due to prompt length]...\n"
+_ANSWER_TRUNCATION_MARKER = (
+    "\n...[truncated before answer generation due to prompt length]...\n"
+)
 
 
 def _trim_answer_input(text: str, *, max_chars: int) -> str:
@@ -252,19 +254,51 @@ _CODE_INTENT_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         CODE_INTENT_IMPLEMENTATION,
-        ("write function", "implement", "refactor", "寫函式", "實作"),
+        (
+            "write function",
+            "implement",
+            "refactor",
+            "寫函式",
+            "實作",
+            "重構",
+            "重构",
+            "修改",
+        ),
     ),
 )
 
 _CODE_SNIPPET_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"```"),
-    re.compile(r"\bdef\s+"),
-    re.compile(r"\bclass\s+"),
-    re.compile(r"\bfunction\s+"),
+    re.compile(r"\bdef\s+[A-Za-z_]\w*\s*\("),
+    re.compile(r"\bclass\s+[A-Za-z_]\w*\s*[:({]"),
+    re.compile(r"\bfunction\s+[A-Za-z_$][\w$]*\s*\("),
     re.compile(r"^\s*import\s+[A-Za-z_][\w.]*", re.MULTILINE),
     re.compile(r"^\s*from\s+[A-Za-z_][\w.]*\s+import\s+", re.MULTILINE),
-    re.compile(r"\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=?"),
+    re.compile(r"\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*="),
 )
+
+_INLINE_CODE_SEGMENT_RE = re.compile(r"`+([^`]+?)`+")
+_CODE_SEGMENT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    *_CODE_SNIPPET_PATTERNS,
+    re.compile(
+        r"^\s*(?:if|for|while|try|except|catch|return)\b.+[:;{]?$", re.MULTILINE
+    ),
+    re.compile(r"^\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?\s*=\s*.+", re.MULTILINE),
+    re.compile(
+        r"^\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?\s*\([^)]*\)", re.MULTILINE
+    ),
+)
+
+_INLINE_CODE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^[A-Za-z_][\w.]*\([^)]*\)$"),
+    re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$"),
+    re.compile(r"^[A-Za-z_]\w*_[A-Za-z0-9_]*$"),
+    re.compile(
+        r"^[A-Za-z_][\w.-]*\.(?:py|pyi|js|jsx|ts|tsx|java|go|rs|cpp|c|h|cs|rb|php)$"
+    ),
+    re.compile(r"[=+*/{};]|->|=>"),
+)
+
 
 _CODE_RETRIEVAL_TARGETS = {
     CODE_INTENT_UNIT_TEST: (
@@ -362,8 +396,36 @@ def detect_query_tags(*texts: str | None) -> QueryTags:
     )
 
 
+def _contains_code_segment(user_message: str) -> bool:
+    """Return True only when the message contains an actual code segment.
+
+    Plain prose with coding words, filenames, or bare identifiers is intentionally
+    not enough. Users need to provide a fenced code block, inline backticked code,
+    or a line that looks like executable/declaration syntax.
+    """
+    if any(pattern.search(user_message) for pattern in _CODE_SEGMENT_PATTERNS):
+        return True
+
+    for match in _INLINE_CODE_SEGMENT_RE.finditer(user_message):
+        segment = match.group(1).strip()
+        if segment and any(
+            pattern.search(segment) for pattern in _INLINE_CODE_PATTERNS
+        ):
+            return True
+
+    return False
+
+
 def detect_code_assist_intent(user_message: str) -> str | None:
-    """Return the code-assistance intent detected in a user message, if any."""
+    """Return the code-assistance intent detected in a user message, if any.
+
+    Intent keywords such as "test", "error", or "modify" are common in normal
+    conversation and documentation questions, so they are only trusted after the
+    message also contains an actual code segment.
+    """
+    if not _contains_code_segment(user_message):
+        return None
+
     normalized = user_message.casefold()
     for intent, keywords in _CODE_INTENT_KEYWORDS:
         if any(keyword.casefold() in normalized for keyword in keywords):
@@ -559,7 +621,9 @@ def build_rag_query_with_attachment(
     )
     if not base_query:
         return safe_attachment_text
-    return f"{base_query}\n\nUploaded input data for RAG search:\n{safe_attachment_text}"
+    return (
+        f"{base_query}\n\nUploaded input data for RAG search:\n{safe_attachment_text}"
+    )
 
 
 def _fallback_retrieval_query(user_message: str, attachment_retrieval_text: str) -> str:
@@ -568,6 +632,27 @@ def _fallback_retrieval_query(user_message: str, attachment_retrieval_text: str)
     if not attachment_retrieval_text.strip():
         return user_message
     return build_rag_query_with_attachment(user_message, attachment_retrieval_text)
+
+
+def _clean_rewritten_query(raw_content: Any, fallback_query: str) -> str:
+    """Return a safe non-empty retrieval query from raw rewriter output.
+
+    The rewriter LLM can occasionally return an empty string. In that case the
+    retrieval query must still be the original user/attachment fallback rather
+    than an empty value.
+    """
+    rewritten = str(raw_content or "").strip()
+    if not rewritten or len(rewritten) > 500 or "\n" in rewritten:
+        logger.warning(
+            "query_rewrite_invalid; using fallback query",
+            extra={
+                "empty": not bool(rewritten),
+                "chars": len(rewritten),
+                "multiline": "\n" in rewritten,
+            },
+        )
+        return fallback_query
+    return rewritten
 
 
 async def rewrite_for_retrieval(
@@ -656,11 +741,7 @@ async def rewrite_for_retrieval(
         result = await rewriter.ainvoke(
             [SystemMessage(content=_REWRITE_SYSTEM), HumanMessage(content=prompt)]
         )
-        rewritten = (result.content or "").strip()
-        # Defensive: bail if model went off the rails (returned nothing,
-        # multiline explanation, or something far longer than expected).
-        if not rewritten or len(rewritten) > 500 or "\n" in rewritten:
-            return fallback_query
+        rewritten = _clean_rewritten_query(result.content, fallback_query)
         return rewritten
     except Exception:
         logger.exception("query_rewrite_failed; falling back to safe retrieval query")
