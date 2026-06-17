@@ -79,10 +79,10 @@ async def test_rewrite_for_retrieval_includes_attachment_hints(monkeypatch) -> N
     assert "ALM-42" in captured["prompt"]
 
 
-
-
 @pytest.mark.asyncio
-async def test_rewrite_for_retrieval_fallback_keeps_attachment_hints(monkeypatch) -> None:
+async def test_rewrite_for_retrieval_fallback_keeps_attachment_hints(
+    monkeypatch,
+) -> None:
     class _FailingRewriter:
         def __init__(self, **_kwargs):
             pass
@@ -100,6 +100,7 @@ async def test_rewrite_for_retrieval_fallback_keeps_attachment_hints(monkeypatch
 
     assert "Filename: alarms.csv" in query
     assert "ALM-42" in query
+
 
 @pytest.mark.parametrize(
     ("message", "expected"),
@@ -189,6 +190,49 @@ def test_rewrite_for_code_retrieval_trims_long_request(monkeypatch) -> None:
     assert "truncated before answer generation" in query
 
 
+@pytest.mark.asyncio
+async def test_rewrite_for_retrieval_empty_rewrite_uses_user_message(
+    monkeypatch,
+) -> None:
+    class _EmptyRewriter:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def ainvoke(self, _messages):
+            return type("Result", (), {"content": "   "})()
+
+    monkeypatch.setattr(chat_service, "ChatOpenAI", _EmptyRewriter)
+
+    query = await rewrite_for_retrieval([], "請幫我找 release note")
+
+    assert query == "請幫我找 release note"
+
+
+def test_clean_rewritten_query_rejects_empty_output() -> None:
+    assert chat_service._clean_rewritten_query("", "fallback query") == "fallback query"
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("請幫我測試這個流程是否正確", None),
+        ("這份文件提到 exception policy，幫我摘要", None),
+        ("請幫我修改會議記錄", None),
+        ("請幫我為 `parse_token` 寫單元測試", chat_service.CODE_INTENT_UNIT_TEST),
+        ("Debug auth_service.py 的 traceback", chat_service.CODE_INTENT_DEBUG),
+        ("請重構 parse_token", chat_service.CODE_INTENT_IMPLEMENTATION),
+        (
+            "```python\ndef parse_token(raw):\n    return raw\n```",
+            chat_service.CODE_INTENT_SNIPPET,
+        ),
+    ],
+)
+def test_detect_code_assist_intent_requires_code_evidence(
+    message: str, expected: str | None
+) -> None:
+    assert chat_service.detect_code_assist_intent(message) == expected
+
+
 def test_trim_answer_input_leaves_short_input_unchanged() -> None:
     assert (
         chat_service._trim_answer_input("  short prompt  ", max_chars=100)
@@ -273,11 +317,14 @@ async def test_stream_answer_trims_context_query_and_user_message(monkeypatch) -
     )
     user_message = messages[-1]
     assert len(context_message.content.removeprefix("Context:\n")) == 100
-    assert len(
-        query_message.content.removeprefix(
-            "Retrieval query used to select context: "
+    assert (
+        len(
+            query_message.content.removeprefix(
+                "Retrieval query used to select context: "
+            )
         )
-    ) == 60
+        == 60
+    )
     assert len(user_message.content) == 80
     assert "truncated before answer generation" in context_message.content
     assert "truncated before answer generation" in query_message.content
