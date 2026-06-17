@@ -219,8 +219,10 @@ def test_clean_rewritten_query_rejects_empty_output() -> None:
         ("這份文件提到 exception policy，幫我摘要", None),
         ("請幫我修改會議記錄", None),
         ("請幫我為 `parse_token` 寫單元測試", chat_service.CODE_INTENT_UNIT_TEST),
-        ("Debug auth_service.py 的 traceback", chat_service.CODE_INTENT_DEBUG),
-        ("請重構 parse_token", chat_service.CODE_INTENT_IMPLEMENTATION),
+        ("Debug auth_service.py 的 traceback", None),
+        ("Debug `auth_service.py` 的 traceback", chat_service.CODE_INTENT_DEBUG),
+        ("請重構 parse_token", None),
+        ("請重構 `parse_token`", chat_service.CODE_INTENT_IMPLEMENTATION),
         (
             "```python\ndef parse_token(raw):\n    return raw\n```",
             chat_service.CODE_INTENT_SNIPPET,

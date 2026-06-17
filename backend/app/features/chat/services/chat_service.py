@@ -277,21 +277,28 @@ _CODE_SNIPPET_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*="),
 )
 
-_CODE_EVIDENCE_PATTERNS: tuple[re.Pattern[str], ...] = (
+_INLINE_CODE_SEGMENT_RE = re.compile(r"`+([^`]+?)`+")
+_CODE_SEGMENT_PATTERNS: tuple[re.Pattern[str], ...] = (
     *_CODE_SNIPPET_PATTERNS,
-    re.compile(r"`[^`]*[A-Za-z_][\w.]*[^`]*`"),
     re.compile(
-        r"\b[A-Za-z_][\w.-]*\."
-        r"(?:py|pyi|js|jsx|ts|tsx|java|go|rs|cpp|c|h|cs|rb|php)\b"
+        r"^\s*(?:if|for|while|try|except|catch|return)\b.+[:;{]?$", re.MULTILINE
     ),
-    re.compile(r"(?<![A-Za-z0-9_.])[A-Za-z_]\w*_[A-Za-z0-9_]*(?![A-Za-z0-9_.])"),
+    re.compile(r"^\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?\s*=\s*.+", re.MULTILINE),
     re.compile(
-        r"(?<![A-Za-z0-9_.])[A-Za-z_][A-Za-z0-9_]*\." r"[A-Za-z_]\w*(?![A-Za-z0-9_.])"
-    ),
-    re.compile(
-        r"(?<![A-Za-z0-9_])[a-z]+(?:[A-Z][a-z0-9]+)+" r"[A-Za-z0-9_]*(?![A-Za-z0-9_])"
+        r"^\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?\s*\([^)]*\)", re.MULTILINE
     ),
 )
+
+_INLINE_CODE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^[A-Za-z_][\w.]*\([^)]*\)$"),
+    re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$"),
+    re.compile(r"^[A-Za-z_]\w*_[A-Za-z0-9_]*$"),
+    re.compile(
+        r"^[A-Za-z_][\w.-]*\.(?:py|pyi|js|jsx|ts|tsx|java|go|rs|cpp|c|h|cs|rb|php)$"
+    ),
+    re.compile(r"[=+*/{};]|->|=>"),
+)
+
 
 _CODE_RETRIEVAL_TARGETS = {
     CODE_INTENT_UNIT_TEST: (
@@ -389,9 +396,24 @@ def detect_query_tags(*texts: str | None) -> QueryTags:
     )
 
 
-def _contains_code_evidence(user_message: str) -> bool:
-    """Return True only when the message contains an actual code-like segment."""
-    return any(pattern.search(user_message) for pattern in _CODE_EVIDENCE_PATTERNS)
+def _contains_code_segment(user_message: str) -> bool:
+    """Return True only when the message contains an actual code segment.
+
+    Plain prose with coding words, filenames, or bare identifiers is intentionally
+    not enough. Users need to provide a fenced code block, inline backticked code,
+    or a line that looks like executable/declaration syntax.
+    """
+    if any(pattern.search(user_message) for pattern in _CODE_SEGMENT_PATTERNS):
+        return True
+
+    for match in _INLINE_CODE_SEGMENT_RE.finditer(user_message):
+        segment = match.group(1).strip()
+        if segment and any(
+            pattern.search(segment) for pattern in _INLINE_CODE_PATTERNS
+        ):
+            return True
+
+    return False
 
 
 def detect_code_assist_intent(user_message: str) -> str | None:
@@ -399,10 +421,9 @@ def detect_code_assist_intent(user_message: str) -> str | None:
 
     Intent keywords such as "test", "error", or "modify" are common in normal
     conversation and documentation questions, so they are only trusted after the
-    message also contains code evidence: a fenced/inline code span, import or
-    declaration syntax, a code filename, or an identifier-like symbol.
+    message also contains an actual code segment.
     """
-    if not _contains_code_evidence(user_message):
+    if not _contains_code_segment(user_message):
         return None
 
     normalized = user_message.casefold()
