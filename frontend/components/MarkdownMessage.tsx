@@ -1,37 +1,70 @@
 "use client";
 
 import { Check, Copy, Download } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ComponentType, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
-import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/light";
-import bash from "react-syntax-highlighter/dist/esm/languages/hljs/bash";
-import css from "react-syntax-highlighter/dist/esm/languages/hljs/css";
-import javascript from "react-syntax-highlighter/dist/esm/languages/hljs/javascript";
-import json from "react-syntax-highlighter/dist/esm/languages/hljs/json";
-import markdown from "react-syntax-highlighter/dist/esm/languages/hljs/markdown";
-import python from "react-syntax-highlighter/dist/esm/languages/hljs/python";
-import sql from "react-syntax-highlighter/dist/esm/languages/hljs/sql";
-import typescript from "react-syntax-highlighter/dist/esm/languages/hljs/typescript";
-import xml from "react-syntax-highlighter/dist/esm/languages/hljs/xml";
+import * as SyntaxHighlighterModule from "react-syntax-highlighter/dist/esm/light";
+import * as bashModule from "react-syntax-highlighter/dist/esm/languages/hljs/bash";
+import * as cssModule from "react-syntax-highlighter/dist/esm/languages/hljs/css";
+import * as javascriptModule from "react-syntax-highlighter/dist/esm/languages/hljs/javascript";
+import * as jsonModule from "react-syntax-highlighter/dist/esm/languages/hljs/json";
+import * as markdownModule from "react-syntax-highlighter/dist/esm/languages/hljs/markdown";
+import * as pythonModule from "react-syntax-highlighter/dist/esm/languages/hljs/python";
+import * as sqlModule from "react-syntax-highlighter/dist/esm/languages/hljs/sql";
+import * as typescriptModule from "react-syntax-highlighter/dist/esm/languages/hljs/typescript";
+import * as xmlModule from "react-syntax-highlighter/dist/esm/languages/hljs/xml";
 import { vs2015 } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import remarkGfm from "remark-gfm";
 
 import { downloadBlob } from "../lib/download";
 
-SyntaxHighlighter.registerLanguage("bash", bash);
-SyntaxHighlighter.registerLanguage("css", css);
-SyntaxHighlighter.registerLanguage("javascript", javascript);
-SyntaxHighlighter.registerLanguage("js", javascript);
-SyntaxHighlighter.registerLanguage("json", json);
-SyntaxHighlighter.registerLanguage("markdown", markdown);
-SyntaxHighlighter.registerLanguage("md", markdown);
-SyntaxHighlighter.registerLanguage("python", python);
-SyntaxHighlighter.registerLanguage("py", python);
-SyntaxHighlighter.registerLanguage("sql", sql);
-SyntaxHighlighter.registerLanguage("typescript", typescript);
-SyntaxHighlighter.registerLanguage("ts", typescript);
-SyntaxHighlighter.registerLanguage("xml", xml);
-SyntaxHighlighter.registerLanguage("html", xml);
+type SyntaxHighlighterComponent = ComponentType<any> & {
+  registerLanguage?: (name: string, language: unknown) => void;
+};
+
+function unwrapDefault<T>(module: T): T extends { default: infer U } ? U : T {
+  return ((module as { default?: unknown }).default ?? module) as T extends {
+    default: infer U;
+  }
+    ? U
+    : T;
+}
+
+const syntaxHighlighter = unwrapDefault(SyntaxHighlighterModule);
+const canSyntaxHighlight = typeof syntaxHighlighter === "function";
+const SyntaxHighlighter = syntaxHighlighter as SyntaxHighlighterComponent;
+const bash = unwrapDefault(bashModule);
+const css = unwrapDefault(cssModule);
+const javascript = unwrapDefault(javascriptModule);
+const json = unwrapDefault(jsonModule);
+const markdown = unwrapDefault(markdownModule);
+const python = unwrapDefault(pythonModule);
+const sql = unwrapDefault(sqlModule);
+const typescript = unwrapDefault(typescriptModule);
+const xml = unwrapDefault(xmlModule);
+
+const languages = [
+  ["bash", bash],
+  ["css", css],
+  ["javascript", javascript],
+  ["js", javascript],
+  ["json", json],
+  ["markdown", markdown],
+  ["md", markdown],
+  ["python", python],
+  ["py", python],
+  ["sql", sql],
+  ["typescript", typescript],
+  ["ts", typescript],
+  ["xml", xml],
+  ["html", xml],
+] as const;
+
+if (typeof SyntaxHighlighter.registerLanguage === "function") {
+  for (const [name, languageDefinition] of languages) {
+    SyntaxHighlighter.registerLanguage(name, languageDefinition);
+  }
+}
 
 export function MarkdownMessage({ content }: { content: string }) {
   return (
@@ -73,23 +106,29 @@ function CodeBlock(props: any) {
         <span>{language ?? "code"}</span>
         <CopyButton text={text} label="Copy code" />
       </div>
-      <SyntaxHighlighter
-        language={language ?? "text"}
-        style={vs2015}
-        PreTag="div"
-        customStyle={{
-          margin: 0,
-          padding: "1rem",
-          background: "#1e1e1e",
-          overflowX: "auto",
-          fontSize: "0.875rem",
-          lineHeight: "1.5rem",
-        }}
-        codeTagProps={{ className: "chat-code-token" }}
-        {...rest}
-      >
-        {text}
-      </SyntaxHighlighter>
+      {canSyntaxHighlight ? (
+        <SyntaxHighlighter
+          language={language ?? "text"}
+          style={vs2015}
+          PreTag="div"
+          customStyle={{
+            margin: 0,
+            padding: "1rem",
+            background: "#1e1e1e",
+            overflowX: "auto",
+            fontSize: "0.875rem",
+            lineHeight: "1.5rem",
+          }}
+          codeTagProps={{ className: "chat-code-token" }}
+          {...rest}
+        >
+          {text}
+        </SyntaxHighlighter>
+      ) : (
+        <pre className="m-0 overflow-x-auto bg-[#1e1e1e] p-4 text-sm leading-6">
+          <code className="chat-code-token">{text}</code>
+        </pre>
+      )}
     </div>
   );
 }
