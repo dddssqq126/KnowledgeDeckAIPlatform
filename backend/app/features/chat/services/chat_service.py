@@ -594,6 +594,7 @@ async def stream_answer(
     code_assist_intent: str | None = None,
     query_tags: QueryTags | None = None,
     retrieval_note: str | None = None,
+    query_pipeline_result: Any | None = None,
 ) -> AsyncIterator[str]:
     """Yields LLM token chunks as plain strings."""
     messages: list[Any] = [SystemMessage(content=SYSTEM_PROMPT)]

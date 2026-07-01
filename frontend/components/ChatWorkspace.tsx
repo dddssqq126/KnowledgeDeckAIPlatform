@@ -209,6 +209,7 @@ export function ChatWorkspace({
         knowledgeBases={knowledgeBases}
         disabled={isStreaming}
         onSend={handleSend}
+        allowAttachments
       />
     </section>
   );

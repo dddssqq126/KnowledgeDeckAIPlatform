@@ -88,7 +88,7 @@ _TOPIC_BOILERPLATE_PHRASES = {
     "all right reserved",
     "copyright all rights reserved",
 }
-_CODE_EXTENSIONS = {"cs", "css", "go", "html", "java", "js", "py", "rs", "ts"}
+_CODE_EXTENSIONS = {"bas", "cs", "css", "go", "html", "java", "js", "py", "rs", "ts"}
 
 _VENDOR_ALIASES = {
     "teradyne ate": "teradyne",

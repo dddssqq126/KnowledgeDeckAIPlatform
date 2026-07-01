@@ -38,6 +38,7 @@ async def make_kb(http_client: AsyncClient, user: User, name: str = "K") -> int:
 PDF_BYTES = b"%PDF-1.4\n%EOF\n"
 TXT_BYTES = b"hello world\n"
 CS_BYTES = b"using System;\nclass A {}\n"
+BAS_BYTES = b"Sub Main()\n  MsgBox \"hello\"\nEnd Sub\n"
 
 
 @pytest.mark.asyncio
@@ -79,11 +80,53 @@ async def test_upload_cs_happy_path(http_client, alice: User) -> None:
 
 
 @pytest.mark.asyncio
+async def test_upload_bas_happy_path(http_client, alice: User) -> None:
+    kb_id = await make_kb(http_client, alice)
+    res = await http_client.post(
+        f"/knowledge-bases/{kb_id}/files",
+        files={"file": ("Module.bas", io.BytesIO(BAS_BYTES), "text/plain")},
+        headers=auth(alice),
+    )
+    assert res.status_code == 201
+    assert res.json()["extension"] == "bas"
+
+
+@pytest.mark.asyncio
+async def test_upload_word_txt_uses_txt_extension(http_client, alice: User) -> None:
+    kb_id = await make_kb(http_client, alice)
+    res = await http_client.post(
+        f"/knowledge-bases/{kb_id}/files",
+        files={"file": ("notes.word.txt", io.BytesIO(TXT_BYTES), "text/plain")},
+        headers=auth(alice),
+    )
+    assert res.status_code == 201
+    assert res.json()["extension"] == "txt"
+
+
+@pytest.mark.asyncio
 async def test_upload_rejects_unknown_extension(http_client, alice: User) -> None:
     kb_id = await make_kb(http_client, alice)
     res = await http_client.post(
         f"/knowledge-bases/{kb_id}/files",
         files={"file": ("x.exe", io.BytesIO(b"PK\x03\x04"), "application/octet-stream")},
+        headers=auth(alice),
+    )
+    assert res.status_code == 400
+    assert res.json() == {"detail": "invalid_extension"}
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_legacy_ppt_extension(http_client, alice: User) -> None:
+    kb_id = await make_kb(http_client, alice)
+    res = await http_client.post(
+        f"/knowledge-bases/{kb_id}/files",
+        files={
+            "file": (
+                "legacy.ppt",
+                io.BytesIO(b"\xd0\xcf\x11\xe0"),
+                "application/vnd.ms-powerpoint",
+            )
+        },
         headers=auth(alice),
     )
     assert res.status_code == 400

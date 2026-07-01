@@ -302,6 +302,7 @@ export default function ChatPage() {
         disabled={isStreaming}
         onSend={handleSend}
         showDeepMode
+        allowAttachments
       />
     </section>
   );

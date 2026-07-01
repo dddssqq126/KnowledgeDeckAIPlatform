@@ -36,6 +36,7 @@ from app.core.config import get_settings
 from app.features.chat.services import chat_service
 from app.features.knowledge_bases.services import file_service
 from app.features.rag.services import document_parser, rag
+from services import query_pipeline
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -570,6 +571,7 @@ async def stream_chat(
         try:
             citations: list[dict[str, Any]] = []
             context = ""
+            query_pipeline_result: query_pipeline.QueryPipelineResult | None = None
             retrieval_note: str | None = None
             rag_query: str | None = None
             code_assist_intent: str | None = None
@@ -626,6 +628,82 @@ async def stream_chat(
                     else attachment_context
                 )
 
+            async def persist_assistant_message(content: str) -> int | None:
+                factory = async_session_factory()
+                async with factory() as save_session:
+                    assistant_message = ChatMessage(
+                        session_id=session_id,
+                        role=ChatRole.ASSISTANT,
+                        content=content,
+                        citations=citations or None,
+                    )
+                    save_session.add(assistant_message)
+                    await save_session.flush()
+                    assistant_message_id = assistant_message.id
+                    touched = await save_session.scalar(
+                        select(ChatSession).where(ChatSession.id == session_id)
+                    )
+                    if touched is not None:
+                        touched.updated_at = datetime.now(timezone.utc)
+                    await save_session.commit()
+                    return assistant_message_id
+
+            if use_rag:
+                try:
+                    query_pipeline_result = query_pipeline.run(
+                        user_id=user_id,
+                        user_message=user_message,
+                        rag_query=rag_query,
+                        history=history,
+                        evidence_context=context,
+                        citations=citations,
+                        kb_ids=kb_ids,
+                    )
+                    if query_pipeline_result.context_block:
+                        context = (
+                            f"{context}\n\n{query_pipeline_result.context_block}"
+                            if context
+                            else query_pipeline_result.context_block
+                        )
+                    if query_pipeline_result.citations:
+                        for item in query_pipeline_result.citations:
+                            if item not in citations:
+                                citations.append(item)
+                except Exception:
+                    logger.exception(
+                        "query_pipeline_failed session=%s user=%s", session_id, user_id
+                    )
+                    fallback_note = "API 查詢暫時失敗，以下先依據既有 RAG 文件內容回答。"
+                    context = f"{context}\n\n{fallback_note}" if context else fallback_note
+                    query_pipeline_result = None
+
+            if (
+                query_pipeline_result is not None
+                and query_pipeline_result.decision == "ask_clarification"
+            ):
+                message = (
+                    query_pipeline_result.user_visible_message
+                    or "請補充必要查詢條件後，我再協助查詢。"
+                )
+                yield _sse("token", {"text": message})
+                assistant_message_id = await persist_assistant_message(message)
+                yield _sse("citations", {"items": citations})
+                yield _sse("done", {"message_id": assistant_message_id})
+                return
+
+            if (
+                query_pipeline_result is not None
+                and query_pipeline_result.decision == "rejected"
+            ):
+                message = (
+                    query_pipeline_result.user_visible_message
+                    or "這個查詢目前無法安全執行，請補充條件或改用已支援的查詢模板。"
+                )
+                yield _sse("token", {"text": message})
+                assistant_message_id = await persist_assistant_message(message)
+                yield _sse("done", {"message_id": assistant_message_id})
+                return
+
             collected: list[str] = []
             async for token in chat_service.stream_answer(
                 history=history,
@@ -635,30 +713,14 @@ async def stream_chat(
                 code_assist_intent=code_assist_intent,
                 query_tags=query_tags,
                 retrieval_note=retrieval_note,
+                query_pipeline_result=query_pipeline_result,
             ):
                 collected.append(token)
                 yield _sse("token", {"text": token})
 
             # Persist the assistant turn in a fresh session — request session
             # already returned to the pool when the response started streaming.
-            factory = async_session_factory()
-            assistant_message_id: int | None = None
-            async with factory() as save_session:
-                assistant_message = ChatMessage(
-                    session_id=session_id,
-                    role=ChatRole.ASSISTANT,
-                    content="".join(collected),
-                    citations=citations or None,
-                )
-                save_session.add(assistant_message)
-                await save_session.flush()
-                assistant_message_id = assistant_message.id
-                touched = await save_session.scalar(
-                    select(ChatSession).where(ChatSession.id == session_id)
-                )
-                if touched is not None:
-                    touched.updated_at = datetime.now(timezone.utc)
-                await save_session.commit()
+            assistant_message_id = await persist_assistant_message("".join(collected))
 
             yield _sse("citations", {"items": citations})
             yield _sse("done", {"message_id": assistant_message_id})

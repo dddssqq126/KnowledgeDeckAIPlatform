@@ -9,6 +9,7 @@ import {
   Moon,
   Palette,
   Presentation,
+  PlugZap,
   Search,
   Settings,
   Sparkles,
@@ -46,6 +47,7 @@ export function AppSidebar() {
   const onKb = pathname.startsWith("/knowledge-bases");
   const onSlides = pathname.startsWith("/slides");
   const onRagDatabases = pathname.startsWith("/rag-databases");
+  const onMcpTools = pathname.startsWith("/mcp-tools");
   const onPresenton = pathname.startsWith("/presenton");
 
   return (
@@ -70,6 +72,9 @@ export function AppSidebar() {
         </NavLink>
         <NavLink href="/rag-databases" active={onRagDatabases} icon={Database}>
           RAG Databases
+        </NavLink>
+        <NavLink href="/mcp-tools" active={onMcpTools} icon={PlugZap}>
+          MCP Tools
         </NavLink>
         <NavLink href="/" active={onChat} icon={MessageSquare}>
           Chat

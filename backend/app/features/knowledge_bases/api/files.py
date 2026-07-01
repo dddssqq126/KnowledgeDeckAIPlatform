@@ -72,6 +72,7 @@ def _content_type_for(extension: str) -> str:
         "py": "text/x-python; charset=utf-8",
         "html": "text/html; charset=utf-8",
         "css": "text/css; charset=utf-8",
+        "bas": "text/plain; charset=utf-8",
         "csv": "text/csv; charset=utf-8",
         "tsv": "text/tab-separated-values; charset=utf-8",
         "docx": (

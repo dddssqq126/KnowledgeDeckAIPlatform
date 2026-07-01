@@ -1,7 +1,7 @@
 """Parse uploaded files into a list of (text, page_number) segments.
 
 Per-format behavior:
-  - txt / cs / md : one segment, page_number=None
+  - txt / cs / bas / md : one segment, page_number=None
   - pdf           : one segment per page, page_number=<1-based>
   - pptx          : one segment per slide, page_number=<slide index>
   - docx          : one segment, page_number=None (no native page concept)
@@ -82,7 +82,7 @@ def _parse_pptx(data: bytes) -> list[ParsedSegment]:
 # Plain-text-ish formats: decoded as UTF-8 into a single segment. Includes
 # code formats — embedding them as raw source works well enough for RAG;
 # we don't strip language-specific syntax (HTML tags / Python comments).
-_TEXT_EXTENSIONS = ("txt", "cs", "md", "py", "html", "css")
+_TEXT_EXTENSIONS = ("txt", "cs", "md", "py", "html", "css", "bas")
 
 
 def parse(extension: str, data: bytes) -> list[ParsedSegment]:

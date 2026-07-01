@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer components {
+  .field-input {
+    @apply w-full rounded-md border border-border bg-white px-3 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground/40;
+  }
+}
+
 :root {
   --background: 210 20% 98%;
   --foreground: 222 47% 11%;

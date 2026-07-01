@@ -402,6 +402,7 @@ export default function SlideSessionPage() {
         knowledgeBases={knowledgeBases}
         disabled={isStreaming || renderState !== null}
         onSend={handleSend}
+        allowAttachments={false}
       />
     </section>
   );

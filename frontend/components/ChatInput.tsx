@@ -4,6 +4,23 @@ import { useEffect, useRef, useState } from "react";
 
 import type { KnowledgeBase } from "../lib/knowledge-bases";
 
+const ACCEPTED_ATTACHMENT_EXTENSIONS = new Set([
+  "txt",
+  "pdf",
+  "cs",
+  "md",
+  "docx",
+  "pptx",
+  "py",
+  "html",
+  "css",
+  "bas",
+]);
+const ACCEPTED_ATTACHMENT_ATTR =
+  ".txt,.pdf,.cs,.md,.docx,.pptx,.py,.html,.css,.bas";
+const MAX_CHAT_ATTACHMENTS = 5;
+const ATTACHMENT_ONLY_PROMPT = "Please answer using the attached file(s).";
+
 type Props = {
   knowledgeBases: KnowledgeBase[];
   disabled: boolean;
@@ -15,6 +32,7 @@ type Props = {
     attachments: File[],
   ) => void;
   showDeepMode?: boolean;
+  allowAttachments?: boolean;
 };
 
 export function ChatInput({
@@ -22,6 +40,7 @@ export function ChatInput({
   disabled,
   onSend,
   showDeepMode = false,
+  allowAttachments = true,
 }: Props) {
   const [text, setText] = useState("");
   // Default to RAG enabled. Empty `kb_ids` = no filter (all KBs) on the backend.
@@ -55,13 +74,19 @@ export function ChatInput({
   function submit() {
     const trimmed = text.trim();
     if (disabled) return;
-    if (!trimmed) {
-      setValidationMessage("請記得輸入資料");
+    if (!trimmed && attachments.length === 0) {
+      setValidationMessage("Enter a message or attach a file.");
       return;
     }
     const kbIds = selectedKbIds.length === 0 ? null : selectedKbIds;
     const filesToSend = [...attachments];
-    onSend(trimmed, useRag, kbIds, useRag && deepMode, filesToSend);
+    onSend(
+      trimmed || ATTACHMENT_ONLY_PROMPT,
+      useRag,
+      kbIds,
+      useRag && deepMode,
+      filesToSend,
+    );
     setText("");
     setValidationMessage(null);
     setAttachments([]);
@@ -75,8 +100,43 @@ export function ChatInput({
   }
 
   function addAttachments(files: FileList | null) {
-    if (!files?.length) return;
-    setAttachments((current) => [...current, ...Array.from(files)]);
+    if (!allowAttachments || !files?.length) return;
+    const incoming = Array.from(files);
+    setAttachments((current) => {
+      const remainingSlots = Math.max(0, MAX_CHAT_ATTACHMENTS - current.length);
+      const accepted: File[] = [];
+      const rejected: string[] = [];
+      let overflowCount = 0;
+
+      for (const file of incoming) {
+        const extension = extensionOf(file.name);
+        if (!ACCEPTED_ATTACHMENT_EXTENSIONS.has(extension)) {
+          rejected.push(file.name);
+          continue;
+        }
+        if (accepted.length >= remainingSlots) {
+          overflowCount += 1;
+          continue;
+        }
+        accepted.push(file);
+      }
+
+      const messages: string[] = [];
+      if (rejected.length > 0) {
+        messages.push(
+          `Unsupported file type: ${rejected.slice(0, 3).join(", ")}${
+            rejected.length > 3 ? `, and ${rejected.length - 3} more` : ""
+          }.`,
+        );
+      }
+      if (overflowCount > 0) {
+        messages.push(`Attach up to ${MAX_CHAT_ATTACHMENTS} files per message.`);
+      }
+      setValidationMessage(messages.length > 0 ? messages.join(" ") : null);
+
+      return [...current, ...accepted];
+    });
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   function removeAttachment(index: number) {
@@ -122,7 +182,7 @@ export function ChatInput({
             {validationMessage}
           </div>
         ) : null}
-        {attachments.length > 0 ? (
+        {allowAttachments && attachments.length > 0 ? (
           <div className="mt-2 flex flex-wrap gap-2">
             {attachments.map((file, index) => (
               <span
@@ -136,7 +196,7 @@ export function ChatInput({
                   className="text-zinc-400 hover:text-zinc-100"
                   aria-label={`Remove ${file.name}`}
                 >
-                  ×
+                  x
                 </button>
               </span>
             ))}
@@ -144,23 +204,27 @@ export function ChatInput({
         ) : null}
         <div className="mt-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-3">
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept=".pdf,.docx,.txt,.cs,.md,.py,.html,.css,.pptx"
-              onChange={(e) => addAttachments(e.target.files)}
-              className="hidden"
-              disabled={disabled}
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={disabled}
-              className="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
-            >
-              Attach files
-            </button>
+            {allowAttachments ? (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept={ACCEPTED_ATTACHMENT_ATTR}
+                  onChange={(e) => addAttachments(e.target.files)}
+                  className="hidden"
+                  disabled={disabled}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={disabled}
+                  className="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
+                >
+                  Attach files
+                </button>
+              </>
+            ) : null}
             <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-400">
               <input
                 type="checkbox"
@@ -250,4 +314,8 @@ export function ChatInput({
       </div>
     </div>
   );
+}
+
+function extensionOf(filename: string): string {
+  return filename.includes(".") ? filename.split(".").pop()!.toLowerCase() : "";
 }

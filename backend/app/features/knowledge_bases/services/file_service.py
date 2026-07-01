@@ -2,7 +2,7 @@ import hashlib
 import io
 
 ALLOWED_EXTENSIONS = {
-    "txt", "pdf", "cs", "md", "docx", "pptx",
+    "txt", "pdf", "cs", "md", "docx", "pptx", "bas",
     "py", "html", "css",  # common code formats — treated as UTF-8 text
 }
 
@@ -48,7 +48,7 @@ def validate_content(extension: str, head: bytes) -> None:
         if not head.startswith(_ZIP_MAGIC):
             raise ValidationError("invalid_content")
         return
-    # txt / cs / md share the text-likeness rule.
+    # Text/code formats share the text-likeness rule.
     sample = head[:1024]
     if b"\x00" in sample:
         raise ValidationError("invalid_content")
