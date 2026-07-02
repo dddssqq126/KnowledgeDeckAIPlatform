@@ -17,6 +17,7 @@ import {
   type McpTool,
   type McpToolDraft,
   type McpTransport,
+  type McpToolStatus,
   registerMcpTool,
   updateMcpToolStatus,
 } from "../../../lib/mcp-tools";
@@ -36,16 +37,31 @@ const blankDraft: McpToolDraft = {
 
 export default function McpToolsPage() {
   const [tools, setTools] = useState<McpTool[]>([]);
-  const [selectedId, setSelectedId] = useState<string>("");
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [draft, setDraft] = useState<McpToolDraft>(blankDraft);
   const [inputSchemaText, setInputSchemaText] = useState("{\n  \"part_no\": \"string\"\n}");
   const [outputSchemaText, setOutputSchemaText] = useState("{\n  \"status\": \"string\"\n}");
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const loaded = loadMcpTools();
-    setTools(loaded);
-    setSelectedId(loaded[0]?.id ?? "");
+    let cancelled = false;
+    loadMcpTools()
+      .then((loaded) => {
+        if (cancelled) return;
+        setTools(loaded);
+        setSelectedId(loaded[0]?.id ?? null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load tools");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const selected = useMemo(
@@ -65,7 +81,7 @@ export default function McpToolsPage() {
     );
   }
 
-  function submit(e: FormEvent<HTMLFormElement>) {
+  async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
     try {
@@ -86,9 +102,9 @@ export default function McpToolsPage() {
       if (nextDraft.timeoutSec <= 0) {
         throw new Error("Timeout must be greater than 0");
       }
-      const next = registerMcpTool(nextDraft, tools);
-      setTools(next);
-      setSelectedId(next[0].id);
+      const created = await registerMcpTool(nextDraft);
+      setTools([created, ...tools]);
+      setSelectedId(created.id);
       setDraft(blankDraft);
       setInputSchemaText("{\n  \"part_no\": \"string\"\n}");
       setOutputSchemaText("{\n  \"status\": \"string\"\n}");
@@ -97,16 +113,28 @@ export default function McpToolsPage() {
     }
   }
 
-  function setStatus(tool: McpTool, status: "enabled" | "disabled") {
-    setTools(updateMcpToolStatus(tool.id, status, tools));
+  async function setStatus(tool: McpTool, status: McpToolStatus) {
+    setError(null);
+    try {
+      const updated = await updateMcpToolStatus(tool.id, status);
+      setTools(tools.map((item) => (item.id === updated.id ? updated : item)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update tool");
+    }
   }
 
-  function remove(tool: McpTool) {
+  async function remove(tool: McpTool) {
     if (tool.builtIn) return;
     if (!window.confirm(`Delete ${tool.name}?`)) return;
-    const next = deleteMcpTool(tool.id, tools);
-    setTools(next);
-    setSelectedId(next[0]?.id ?? "");
+    setError(null);
+    try {
+      await deleteMcpTool(tool.id);
+      const next = tools.filter((item) => item.id !== tool.id);
+      setTools(next);
+      setSelectedId(next[0]?.id ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete tool");
+    }
   }
 
   return (
@@ -142,6 +170,12 @@ export default function McpToolsPage() {
                 Register
               </button>
             </div>
+
+            {loading ? (
+              <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+                Loading tools...
+              </div>
+            ) : null}
 
             {error ? (
               <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -248,9 +282,8 @@ export default function McpToolsPage() {
               </div>
               <div className="nice-scrollbar max-h-[720px] overflow-auto">
                 {tools.map((tool) => (
-                  <button
+                  <div
                     key={tool.id}
-                    type="button"
                     onClick={() => setSelectedId(tool.id)}
                     className={`grid w-full grid-cols-[minmax(170px,1fr)_140px_112px_112px] items-center gap-2 border-b border-border px-4 py-3 text-left text-sm ${
                       selected?.id === tool.id
@@ -304,7 +337,7 @@ export default function McpToolsPage() {
                         <Trash2 className="h-4 w-4" />
                       </IconButton>
                     </span>
-                  </button>
+                  </div>
                 ))}
               </div>
             </div>

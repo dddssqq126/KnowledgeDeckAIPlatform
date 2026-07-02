@@ -13,6 +13,7 @@ from app.db import base as db_base
 from app.db.base import Base
 from app.db.models import ChatSession, User
 from app.features.chat.api import chat as chat_api
+from app.features.mcp_tools.services.tool_service import seed_builtin_tools
 from app.main import create_app
 from services.query_pipeline import QueryPipelineResult
 
@@ -180,6 +181,49 @@ async def test_chat_stream_bom_cost_appends_query_pipeline_context(
     assert captured["pipeline_kwargs"]["evidence_context"] == "rag context"
     assert "unit_price: 12.5" in captured["context"]
     assert captured["query_pipeline_result"].decision == "call_query_template"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_passes_seeded_llm_info_tool_cards(
+    http_client: AsyncClient, db_session: AsyncSession, alice: User, monkeypatch
+) -> None:
+    await seed_builtin_tools(db_session)
+    await db_session.commit()
+    chat = await make_chat(db_session, alice)
+    captured: dict[str, Any] = {}
+    _patch_rag(monkeypatch)
+
+    def fake_run(**kwargs):
+        captured["query_cards"] = kwargs.get("query_cards")
+        return QueryPipelineResult(
+            decision="call_query_template",
+            query_name="query_llm_info",
+            query_plan={"decision": "call_query_template"},
+            query_result={"row_count": 1},
+            result_verification={"ok": True},
+            context_block=(
+                "Query Template: query_llm_info\n"
+                '{"label":"Gemma 4 E4B","model_id":"google/gemma-4-E4B-it"}'
+            ),
+            citations=[],
+            debug={},
+        )
+
+    async def fake_stream_answer(**kwargs):
+        captured["context"] = kwargs.get("context")
+        yield "This system uses Gemma 4 E4B."
+
+    monkeypatch.setattr(chat_api.query_pipeline, "run", fake_run)
+    monkeypatch.setattr(chat_api.chat_service, "stream_answer", fake_stream_answer)
+
+    res = await _post_stream(http_client, alice, chat, "What LLM does this system use?")
+
+    assert res.status_code == 200
+    assert "Gemma 4 E4B" in res.text
+    assert "query_llm_info" in {
+        card["query_name"] for card in captured["query_cards"]
+    }
+    assert "google/gemma-4-E4B-it" in captured["context"]
 
 
 @pytest.mark.asyncio

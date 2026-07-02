@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from agents.query_planner import QueryPlan
 from sql_templates.registry import SqlTemplate, validate_sql_template
 
 
 ValidatorAction = Literal["execute", "ask_clarification", "reject"]
+EXECUTABLE_HANDLER_KEYS = {"llm_info", "query_bom_cost"}
 
 
 class QueryValidationResult(BaseModel):
@@ -51,6 +52,17 @@ def _required_arg_names(card: dict[str, Any] | None) -> list[str]:
     return []
 
 
+def _optional_arg_names(card: dict[str, Any] | None) -> list[str]:
+    if card is None:
+        return []
+    optional_args = card.get("optional_args") or {}
+    if isinstance(optional_args, dict):
+        return list(optional_args)
+    if isinstance(optional_args, list):
+        return [str(item) for item in optional_args]
+    return []
+
+
 def _contains_raw_sql(value: Any) -> bool:
     if isinstance(value, dict):
         return any(k == "raw_sql" or _contains_raw_sql(v) for k, v in value.items())
@@ -59,25 +71,76 @@ def _contains_raw_sql(value: Any) -> bool:
     return False
 
 
+def _arg_specs(card: dict[str, Any] | None) -> dict[str, Any]:
+    if card is None:
+        return {}
+    specs: dict[str, Any] = {}
+    for group_name in ("required_args", "optional_args"):
+        group = card.get(group_name) or {}
+        if isinstance(group, dict):
+            specs.update(group)
+    return specs
+
+
+def _arg_type(spec: Any) -> str:
+    if isinstance(spec, dict):
+        return str(spec.get("type") or "any")
+    if hasattr(spec, "type"):
+        return str(spec.type)
+    return str(spec or "any")
+
+
+def _matches_type(value: Any, expected: str) -> bool:
+    normalized = expected.strip().casefold()
+    if normalized in {"any", "unknown"}:
+        return True
+    if normalized in {"str", "string", "text"}:
+        return isinstance(value, str)
+    if normalized in {"int", "integer"}:
+        return isinstance(value, int) and not isinstance(value, bool)
+    if normalized in {"float", "number", "numeric", "decimal"}:
+        return isinstance(value, int | float) and not isinstance(value, bool)
+    if normalized in {"bool", "boolean"}:
+        return isinstance(value, bool)
+    if normalized in {"list", "array"}:
+        return isinstance(value, list)
+    if normalized in {"dict", "object", "json"}:
+        return isinstance(value, dict)
+    if normalized.endswith(" | null") or normalized.endswith(" or null"):
+        base = normalized.replace(" | null", "").replace(" or null", "")
+        return value is None or _matches_type(value, base)
+    return True
+
+
 def _validate_arguments(
     *,
-    query_name: str | None,
+    candidate_card: dict[str, Any] | None,
     arguments: dict[str, Any],
-    query_arg_schema_map: dict[str, type[BaseModel]],
 ) -> tuple[bool, dict[str, Any], str | None]:
-    if query_name is None:
-        return False, {}, "query_name is required for argument validation"
+    if candidate_card is None:
+        return False, {}, "query card not found for argument validation"
 
-    schema = query_arg_schema_map.get(query_name)
-    if schema is None:
-        return False, {}, f"argument schema not found for query_name: {query_name}"
+    specs = _arg_specs(candidate_card)
+    allowed_args = set(specs)
+    required_args = set(_required_arg_names(candidate_card))
+    normalized: dict[str, Any] = {}
 
-    try:
-        model = schema.model_validate(arguments)
-    except ValidationError as exc:
-        return False, {}, str(exc)
+    for name in required_args:
+        if name not in arguments or arguments[name] in (None, ""):
+            return False, normalized, f"missing required argument: {name}"
 
-    return True, model.model_dump(), None
+    for name, value in arguments.items():
+        if name not in allowed_args:
+            return False, {}, f"unknown argument: {name}"
+        if value is None:
+            normalized[name] = value
+            continue
+        expected = _arg_type(specs[name])
+        if not _matches_type(value, expected):
+            return False, {}, f"argument {name} must be {expected}"
+        normalized[name] = value
+
+    return True, normalized, None
 
 
 def _validate_template(template: SqlTemplate | None) -> tuple[bool, str | None]:
@@ -95,7 +158,7 @@ def validate_query_plan(
     query_plan: QueryPlan | dict[str, Any],
     candidate_query_cards: list[dict[str, Any]],
     sql_template_registry: dict[str, SqlTemplate],
-    query_arg_schema_map: dict[str, type[BaseModel]],
+    query_arg_schema_map: dict[str, type[BaseModel]] | None = None,
 ) -> QueryValidationResult:
     plan = (
         query_plan
@@ -105,8 +168,10 @@ def validate_query_plan(
     query_name = plan.query_name
     candidate_card = _candidate_card(query_name, candidate_query_cards)
     template = sql_template_registry.get(query_name or "")
+    handler_key = str((candidate_card or {}).get("handler_key") or "")
+    requires_sql_template = handler_key == "query_bom_cost" or not handler_key
 
-    query_exists_in_registry = query_name in sql_template_registry
+    query_exists_in_registry = (query_name in sql_template_registry) if requires_sql_template else True
     query_exists_in_candidate_cards = query_name in _candidate_query_names(
         candidate_query_cards
     )
@@ -117,16 +182,22 @@ def validate_query_plan(
     )
     confidence_passed = plan.confidence >= 0.7
     raw_sql_absent = not _contains_raw_sql(plan.arguments)
-    sql_template_valid, template_error = _validate_template(template)
+    sql_template_valid, template_error = (
+        _validate_template(template) if requires_sql_template else (True, None)
+    )
+    handler_valid = (
+        plan.decision != "call_query_template"
+        or handler_key in EXECUTABLE_HANDLER_KEYS
+        or requires_sql_template
+    )
 
     schema_valid = False
     normalized_arguments: dict[str, Any] = {}
     schema_error: str | None = None
     if raw_sql_absent:
         schema_valid, normalized_arguments, schema_error = _validate_arguments(
-            query_name=query_name,
+            candidate_card=candidate_card,
             arguments=plan.arguments,
-            query_arg_schema_map=query_arg_schema_map,
         )
 
     checks = {
@@ -137,6 +208,7 @@ def validate_query_plan(
         "confidence_passed": confidence_passed,
         "raw_sql_absent": raw_sql_absent,
         "sql_template_valid": sql_template_valid,
+        "handler_valid": handler_valid,
     }
 
     if plan.decision == "answer_from_docs":

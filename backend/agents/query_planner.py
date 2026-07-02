@@ -47,8 +47,8 @@ You are a query planner. Produce exactly one QueryPlan JSON object.
 
 Allowed decisions:
 - answer_from_docs: use this for process, policy, definition, or documentation questions.
-- call_query_template: use this when a database-backed query template is needed and all
-  required arguments are available.
+- call_query_template: use this when a registered tool or database-backed query
+  template is needed and all required arguments are available.
 - ask_clarification: use this when required arguments are missing or ambiguous.
 
 Rules:
@@ -56,6 +56,7 @@ Rules:
 - Do not output raw_sql.
 - Choose query_name only from candidate_query_cards.
 - Use missing_args for any required argument that is not available.
+- For zero-argument tools, use arguments={} and missing_args=[].
 - Use required_evidence_ids for evidence items needed to justify the plan.
 """.strip()
     user_prompt = json.dumps(

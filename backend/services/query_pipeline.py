@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal, Protocol
 
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
+from app.core.config import get_settings
+from app.features.mcp_tools.services import tool_service
 from agents.query_planner import QueryPlannerLLMClient, generate_query_plan
 from agents.query_validator import validate_query_plan
 from agents.result_verifier import verify_query_result
 from agents.synthesizer import synthesize_answer
-from mcp_servers.business_query_server import query_bom_cost
 from sql_templates.registry import SQL_TEMPLATE_REGISTRY, SqlTemplate
 
 
@@ -41,7 +45,6 @@ class QueryExecutor(Protocol):
 
 class BomCostArgs(BaseModel):
     part_no: str
-    project_id: str
 
 
 QUERY_ARG_SCHEMA_MAP: dict[str, type[BaseModel]] = {
@@ -53,48 +56,82 @@ DEFAULT_QUERY_CARDS: list[dict[str, Any]] = [
     {
         "query_name": "query_bom_cost",
         "title": "BOM Cost",
-        "description": "Returns BOM cost rows for a part in a project.",
+        "description": "Returns BOM cost rows for a part number.",
         "sql_type": "select",
-        "when_to_use": ["User asks for BOM cost by part and project."],
+        "when_to_use": ["User asks for BOM cost by part number."],
         "do_not_use_when": ["User asks about process documentation only."],
-        "required_args": {
-            "part_no": {"type": "string", "description": "Part number."},
-            "project_id": {"type": "string", "description": "Project id."},
-        },
+        "required_args": {"part_no": {"type": "string", "description": "Part number."}},
         "optional_args": {},
         "output_schema": {
             "part_no": "string",
-            "unit_price": "number",
-            "currency": "string",
-            "vendor": "string",
-            "updated_at": "string",
+            "component_part_no": "string",
+            "quantity": "number",
+            "unit_cost": "number",
+            "extended_cost": "number",
         },
         "empty_result_policy": {
             "answer": "No BOM cost rows were found for the query conditions."
         },
         "row_limit": 500,
+        "transport": "in-process",
+        "handler_key": "query_bom_cost",
+        "template_id": "query_bom_cost:v1",
     }
 ]
 
 
+def _json_from_text(text: str) -> dict[str, Any]:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
+        stripped = re.sub(r"\s*```$", "", stripped)
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
+        if match is None:
+            raise
+        parsed = json.loads(match.group(0))
+    if not isinstance(parsed, dict):
+        raise ValueError("Query planner LLM must return a JSON object")
+    return parsed
+
+
+class ConfiguredQueryPlannerLLMClient:
+    def generate_query_plan(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        settings = get_settings()
+        llm = ChatOpenAI(
+            model=settings.llm_model,
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            streaming=False,
+            temperature=0,
+            max_tokens=512,
+        )
+        result = llm.invoke(
+            [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+        )
+        return _json_from_text(str(result.content or ""))
+
+
 class McpQueryExecutor:
+    def __init__(self, tool_cards: list[dict[str, Any]] | None = None) -> None:
+        self.tool_cards = tool_cards or DEFAULT_QUERY_CARDS
+
     def execute(self, query_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        if "raw_sql" in arguments:
-            raise ValueError("raw_sql is not allowed")
-        if query_name == "query_bom_cost":
-            response = query_bom_cost({"part_no": arguments["part_no"]})
-            return response.model_dump()
-        raise KeyError(f"Unsupported query_name: {query_name}")
+        return tool_service.execute_registered_tool(
+            query_name=query_name,
+            arguments=arguments,
+            tool_cards=self.tool_cards,
+        )
 
 
 def find_candidate_query_cards(
     *, search_text: str, query_cards: list[dict[str, Any]] | None = None
 ) -> list[dict[str, Any]]:
-    cards = query_cards or DEFAULT_QUERY_CARDS
-    lowered = search_text.casefold()
-    if "bom" in lowered and ("cost" in lowered or "成本" in lowered):
-        return [card for card in cards if card.get("query_name") == "query_bom_cost"]
-    return []
+    _ = search_text
+    cards = DEFAULT_QUERY_CARDS if query_cards is None else query_cards
+    return [card for card in cards if card.get("query_name")]
 
 
 def _evidence_pack(
@@ -189,7 +226,7 @@ def run_query_pipeline(
             user_query=user_message,
             evidence_pack=evidence_pack,
             candidate_query_cards=candidate_query_cards,
-            llm_client=planner_client,
+            llm_client=planner_client or ConfiguredQueryPlannerLLMClient(),
         )
     except ValueError as exc:
         return QueryPipelineResult(
@@ -263,7 +300,7 @@ def run_query_pipeline(
             debug=debug,
         )
 
-    runner = executor or McpQueryExecutor()
+    runner = executor or McpQueryExecutor(tool_cards=candidate_query_cards)
     query_result = runner.execute(
         validation.query_name or "",
         validation.normalized_arguments,

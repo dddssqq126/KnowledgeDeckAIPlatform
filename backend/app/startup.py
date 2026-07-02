@@ -9,6 +9,7 @@ from app.core.config import Settings, get_settings
 from app.db.base import async_session_factory, get_engine
 from app.db.models import Base
 from app.db.models import User
+from app.features.mcp_tools.services.tool_service import seed_builtin_tools
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ async def lifespan(app: FastAPI):
     factory = async_session_factory()
     async with factory() as session:
         await seed_initial_user(session)
+        await seed_builtin_tools(session)
         await session.commit()
 
     from app.features.knowledge_bases.services.object_storage import get_storage_client

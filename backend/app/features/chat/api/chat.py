@@ -35,6 +35,7 @@ from app.db.models import (
 from app.core.config import get_settings
 from app.features.chat.services import chat_service
 from app.features.knowledge_bases.services import file_service
+from app.features.mcp_tools.services import tool_service
 from app.features.rag.services import document_parser, rag
 from services import query_pipeline
 
@@ -650,6 +651,13 @@ async def stream_chat(
 
             if use_rag:
                 try:
+                    async with async_session_factory()() as tool_session:
+                        tools = await tool_service.list_visible_tools(
+                            tool_session,
+                            owner_user_id=user_id,
+                            enabled_only=True,
+                        )
+                    query_cards = tool_service.tools_to_query_cards(tools)
                     query_pipeline_result = query_pipeline.run(
                         user_id=user_id,
                         user_message=user_message,
@@ -658,6 +666,7 @@ async def stream_chat(
                         evidence_context=context,
                         citations=citations,
                         kb_ids=kb_ids,
+                        query_cards=query_cards,
                     )
                     if query_pipeline_result.context_block:
                         context = (
