@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 
-EntityStatus = Literal["resolved", "ambiguous", "missing"]
-EntityMatchType = Literal["exact", "fuzzy", "ambiguous", "missing", "not_provided"]
+EntityStatus = Literal["resolved", "missing"]
+EntityMatchType = Literal["pattern", "missing", "not_provided"]
 
 
 class EntityResult(BaseModel):
@@ -23,41 +24,18 @@ class EntityResolutionResult(BaseModel):
     missing: list[str]
 
 
-part_no_aliases: list[dict[str, str]] = [
-    {"alias": "A123", "value": "A123", "label": "Fan motor A123"},
-    {"alias": "fan motor a123", "value": "A123", "label": "Fan motor A123"},
-    {"alias": "風扇馬達 A123", "value": "A123", "label": "Fan motor A123"},
-    {"alias": "B456", "value": "B456", "label": "Fan motor B456"},
-    {"alias": "風扇馬達 B456", "value": "B456", "label": "Fan motor B456"},
-    {"alias": "C789", "value": "C789", "label": "Control board C789"},
-]
-
-project_aliases: list[dict[str, str]] = [
-    {"alias": "P01", "value": "P01", "label": "Project P01"},
-    {"alias": "project p01", "value": "P01", "label": "Project P01"},
-    {"alias": "P02", "value": "P02", "label": "Project P02"},
-]
-
-vendor_aliases: list[dict[str, str]] = [
-    {"alias": "Acme", "value": "ACME", "label": "Acme Corporation"},
-    {"alias": "Acme Corporation", "value": "ACME", "label": "Acme Corporation"},
-    {"alias": "Globex", "value": "GLOBEX", "label": "Globex Corporation"},
-]
+PART_NO_PATTERN = re.compile(r"^[A-Z]{4}\d{2}$", flags=re.IGNORECASE)
+PROJECT_ID_PATTERN = re.compile(
+    r"^(?=.*[A-Z])(?=.*\d)[A-Z0-9][A-Z0-9_-]*$", flags=re.IGNORECASE
+)
 
 
-def _normalize(value: str) -> str:
-    return " ".join(value.strip().casefold().split())
-
-
-def _candidate(row: dict[str, str]) -> dict[str, str]:
-    return {
-        "value": row["value"],
-        "alias": row["alias"],
-        "label": row["label"],
-    }
-
-
-def _resolve_one(value: str | None, aliases: list[dict[str, str]]) -> EntityResult:
+def _resolve_by_pattern(
+    value: str | None,
+    *,
+    pattern: re.Pattern[str] | None,
+    normalize_value: bool = True,
+) -> EntityResult:
     if value is None or not value.strip():
         return EntityResult(
             input=value,
@@ -65,44 +43,20 @@ def _resolve_one(value: str | None, aliases: list[dict[str, str]]) -> EntityResu
             match_type="not_provided",
         )
 
-    normalized = _normalize(value)
-    exact_matches = [row for row in aliases if _normalize(row["alias"]) == normalized]
-    exact_values = {row["value"] for row in exact_matches}
-    if len(exact_values) == 1:
+    clean_value = value.strip()
+    if pattern is not None and pattern.fullmatch(clean_value):
+        resolved_value = clean_value.upper() if normalize_value else clean_value
         return EntityResult(
             input=value,
-            resolved_value=next(iter(exact_values)),
-            match_type="exact",
-            candidates=[_candidate(row) for row in exact_matches],
-        )
-    if len(exact_values) > 1:
-        return EntityResult(
-            input=value,
-            resolved_value=None,
-            match_type="ambiguous",
-            candidates=[_candidate(row) for row in exact_matches],
-        )
-
-    fuzzy_matches = [
-        row
-        for row in aliases
-        if normalized in _normalize(row["alias"]) or _normalize(row["alias"]) in normalized
-    ]
-    fuzzy_by_value = {row["value"]: row for row in fuzzy_matches}
-    if len(fuzzy_by_value) == 1:
-        row = next(iter(fuzzy_by_value.values()))
-        return EntityResult(
-            input=value,
-            resolved_value=row["value"],
-            match_type="fuzzy",
-            candidates=[_candidate(row)],
-        )
-    if len(fuzzy_by_value) > 1:
-        return EntityResult(
-            input=value,
-            resolved_value=None,
-            match_type="ambiguous",
-            candidates=[_candidate(row) for row in fuzzy_by_value.values()],
+            resolved_value=resolved_value,
+            match_type="pattern",
+            candidates=[
+                {
+                    "value": resolved_value,
+                    "alias": clean_value,
+                    "label": resolved_value,
+                }
+            ],
         )
 
     return EntityResult(
@@ -119,25 +73,16 @@ def resolve_entities(
     vendor_name: str | None = None,
 ) -> EntityResolutionResult:
     entities = {
-        "part_no": _resolve_one(part_no, part_no_aliases),
-        "project_id": _resolve_one(project_id, project_aliases),
-        "vendor_name": _resolve_one(vendor_name, vendor_aliases),
+        "part_no": _resolve_by_pattern(part_no, pattern=PART_NO_PATTERN),
+        "project_id": _resolve_by_pattern(project_id, pattern=PROJECT_ID_PATTERN),
+        "vendor_name": _resolve_by_pattern(vendor_name, pattern=None),
     }
-    ambiguous = [
-        name for name, result in entities.items() if result.match_type == "ambiguous"
-    ]
     missing = [name for name, result in entities.items() if result.match_type == "missing"]
-
-    if ambiguous:
-        status: EntityStatus = "ambiguous"
-    elif missing:
-        status = "missing"
-    else:
-        status = "resolved"
+    status: EntityStatus = "missing" if missing else "resolved"
 
     return EntityResolutionResult(
         status=status,
         entities=entities,
-        ambiguous=ambiguous,
+        ambiguous=[],
         missing=missing,
     )

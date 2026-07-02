@@ -54,27 +54,27 @@ def _evidence_pack() -> list[dict[str, Any]]:
 
 def test_generate_query_plan_calls_query_template_for_complete_bom_cost_request() -> None:
     plan = generate_query_plan(
-        user_query="請查 A123 在 P01 的 BOM cost",
+        user_query="請查 ABCD12 在 123A 的 BOM cost",
         evidence_pack=_evidence_pack(),
         candidate_query_cards=_candidate_query_cards(),
     )
 
     assert plan.decision == "call_query_template"
     assert plan.query_name == "query_bom_cost"
-    assert plan.arguments == {"part_no": "A123", "project_id": "P01"}
+    assert plan.arguments == {"part_no": "ABCD12", "project_id": "123A"}
     assert plan.missing_args == []
 
 
 def test_generate_query_plan_asks_clarification_when_project_id_missing() -> None:
     plan = generate_query_plan(
-        user_query="請查 A123 的 BOM cost",
+        user_query="請查 ABCD12 的 BOM cost",
         evidence_pack=_evidence_pack(),
         candidate_query_cards=_candidate_query_cards(),
     )
 
     assert plan.decision == "ask_clarification"
     assert plan.query_name == "query_bom_cost"
-    assert plan.arguments == {"part_no": "A123"}
+    assert plan.arguments == {"part_no": "ABCD12"}
     assert plan.missing_args == ["project_id"]
 
 
@@ -96,7 +96,7 @@ def test_generate_query_plan_rejects_query_name_outside_candidates() -> None:
         {
             "decision": "call_query_template",
             "query_name": "query_inventory",
-            "arguments": {"part_no": "A123", "project_id": "P01"},
+            "arguments": {"part_no": "ABCD12", "project_id": "123A"},
             "missing_args": [],
             "confidence": 0.9,
             "reason": "Bad query name.",
@@ -106,7 +106,7 @@ def test_generate_query_plan_rejects_query_name_outside_candidates() -> None:
 
     with pytest.raises(ValueError, match="candidate_query_cards"):
         generate_query_plan(
-            user_query="請查 A123 在 P01 的 BOM cost",
+            user_query="請查 ABCD12 在 123A 的 BOM cost",
             evidence_pack=_evidence_pack(),
             candidate_query_cards=_candidate_query_cards(),
             llm_client=client,
@@ -128,7 +128,7 @@ def test_generate_query_plan_rejects_raw_sql_output() -> None:
 
     with pytest.raises(ValueError, match="raw_sql"):
         generate_query_plan(
-            user_query="請查 A123 在 P01 的 BOM cost",
+            user_query="請查 ABCD12 在 123A 的 BOM cost",
             evidence_pack=_evidence_pack(),
             candidate_query_cards=_candidate_query_cards(),
             llm_client=client,
@@ -137,7 +137,7 @@ def test_generate_query_plan_rejects_raw_sql_output() -> None:
 
 def test_build_query_planner_prompt_removes_auth_scope_and_risk_level() -> None:
     _system_prompt, user_prompt = build_query_planner_prompt(
-        user_query="請查 A123 在 P01 的 BOM cost",
+        user_query="請查 ABCD12 在 123A 的 BOM cost",
         evidence_pack=_evidence_pack(),
         candidate_query_cards=_candidate_query_cards(),
     )

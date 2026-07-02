@@ -20,43 +20,17 @@ def _patch_app_storage() -> None:
     pass
 
 
-def test_resolve_part_no_a123_exact_match() -> None:
+def test_resolve_pattern_part_no() -> None:
+    result = resolve_entities(part_no="abcd12")
+
+    entity = result.entities["part_no"]
+    assert result.status == "resolved"
+    assert entity.match_type == "pattern"
+    assert entity.resolved_value == "ABCD12"
+
+
+def test_resolve_part_no_does_not_use_old_alias() -> None:
     result = resolve_entities(part_no="A123")
-
-    entity = result.entities["part_no"]
-    assert entity.match_type == "exact"
-    assert entity.resolved_value == "A123"
-
-
-def test_resolve_project_p01_exact_match() -> None:
-    result = resolve_entities(project_id="P01")
-
-    entity = result.entities["project_id"]
-    assert entity.match_type == "exact"
-    assert entity.resolved_value == "P01"
-
-
-def test_resolve_vendor_name_exact_match() -> None:
-    result = resolve_entities(vendor_name="Acme")
-
-    entity = result.entities["vendor_name"]
-    assert entity.match_type == "exact"
-    assert entity.resolved_value == "ACME"
-
-
-def test_resolve_fan_motor_fuzzy_multiple_candidates_is_ambiguous() -> None:
-    result = resolve_entities(part_no="風扇馬達")
-
-    entity = result.entities["part_no"]
-    assert result.status == "ambiguous"
-    assert result.ambiguous == ["part_no"]
-    assert entity.match_type == "ambiguous"
-    assert entity.resolved_value is None
-    assert {candidate["value"] for candidate in entity.candidates} == {"A123", "B456"}
-
-
-def test_resolve_unknown_part_no_is_missing() -> None:
-    result = resolve_entities(part_no="ZZZ999")
 
     entity = result.entities["part_no"]
     assert result.status == "missing"
@@ -65,11 +39,42 @@ def test_resolve_unknown_part_no_is_missing() -> None:
     assert entity.resolved_value is None
 
 
+def test_resolve_project_alphanumeric() -> None:
+    result = resolve_entities(project_id="123a")
+
+    entity = result.entities["project_id"]
+    assert result.status == "resolved"
+    assert entity.match_type == "pattern"
+    assert entity.resolved_value == "123A"
+
+
+def test_resolve_non_pattern_text_is_missing_not_fuzzy() -> None:
+    result = resolve_entities(part_no="風扇馬達")
+
+    entity = result.entities["part_no"]
+    assert result.status == "missing"
+    assert result.ambiguous == []
+    assert result.missing == ["part_no"]
+    assert entity.match_type == "missing"
+    assert entity.resolved_value is None
+    assert entity.candidates == []
+
+
 def test_resolve_vendor_not_provided() -> None:
-    result = resolve_entities(part_no="A123")
+    result = resolve_entities(part_no="ABCD12")
 
     entity = result.entities["vendor_name"]
     assert result.status == "resolved"
     assert entity.match_type == "not_provided"
     assert entity.resolved_value is None
     assert entity.candidates == []
+
+
+def test_resolve_vendor_does_not_use_old_alias() -> None:
+    result = resolve_entities(vendor_name="Acme")
+
+    entity = result.entities["vendor_name"]
+    assert result.status == "missing"
+    assert result.missing == ["vendor_name"]
+    assert entity.match_type == "missing"
+    assert entity.resolved_value is None

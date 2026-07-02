@@ -125,16 +125,25 @@ def _required_args(card: dict[str, Any]) -> list[str]:
     return []
 
 
+PART_NO_TOKEN = re.compile(r"\b[A-Z]{4}\d{2}\b", flags=re.IGNORECASE)
+PROJECT_TOKEN = re.compile(
+    r"\b(?=[A-Z0-9_-]*[A-Z])(?=[A-Z0-9_-]*\d)[A-Z0-9][A-Z0-9_-]*\b",
+    flags=re.IGNORECASE,
+)
+
+
 def _extract_argument(user_query: str, arg_name: str) -> str | None:
     if arg_name == "part_no":
-        match = re.search(r"\b[A-Z]\d{3}\b", user_query, flags=re.IGNORECASE)
+        match = PART_NO_TOKEN.search(user_query)
         return match.group(0).upper() if match else None
     if arg_name == "project_id":
-        match = re.search(r"\bP\d{2}\b", user_query, flags=re.IGNORECASE)
-        return match.group(0).upper() if match else None
+        for match in PROJECT_TOKEN.finditer(user_query):
+            token = match.group(0)
+            if not PART_NO_TOKEN.fullmatch(token):
+                return token.upper()
+        return None
     if arg_name == "vendor_name":
-        match = re.search(r"\b(?:Acme|Globex)\b", user_query, flags=re.IGNORECASE)
-        return match.group(0) if match else None
+        return None
     return None
 
 
