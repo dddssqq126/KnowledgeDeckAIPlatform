@@ -57,7 +57,7 @@ class FakePlannerClient:
 def _run(**overrides):
     payload = {
         "user_id": 1,
-        "user_message": "請查 A123 在 P01 的 BOM cost",
+        "user_message": "請查 ABCD12 在 123A 的 BOM cost",
         "rag_query": None,
         "history": [],
         "evidence_context": "BOM cost needs part_no and project_id.",
@@ -72,7 +72,7 @@ def test_query_pipeline_executes_bom_cost_and_context_contains_unit_price() -> N
     executor = FakeExecutor(
         rows=[
             {
-                "part_no": "A123",
+                "part_no": "ABCD12",
                 "unit_price": 12.5,
                 "currency": "USD",
                 "vendor": "Acme",
@@ -93,7 +93,7 @@ def test_query_pipeline_executes_bom_cost_and_context_contains_unit_price() -> N
     assert executor.calls == [
         {
             "query_name": "query_bom_cost",
-            "arguments": {"part_no": "A123", "project_id": "P01"},
+            "arguments": {"part_no": "ABCD12", "project_id": "123A"},
         }
     ]
 
@@ -101,7 +101,7 @@ def test_query_pipeline_executes_bom_cost_and_context_contains_unit_price() -> N
 def test_query_pipeline_missing_project_id_asks_clarification_without_executor() -> None:
     executor = FakeExecutor(rows=[])
 
-    result = _run(user_message="請查 A123 的 BOM cost", executor=executor)
+    result = _run(user_message="請查 ABCD12 的 BOM cost", executor=executor)
 
     assert result.decision == "ask_clarification"
     assert result.query_name == "query_bom_cost"
