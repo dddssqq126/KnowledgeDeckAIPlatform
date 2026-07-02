@@ -22,6 +22,7 @@ describe("McpToolsPage", () => {
         serverName: "system_info_server",
         description: "Returns model info.",
         transport: "in-process",
+        method: "POST",
         endpoint: "app.shared.api.llm_info",
         templateId: "query_llm_info:v1",
         timeoutSec: 5,

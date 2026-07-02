@@ -169,7 +169,11 @@ def validate_query_plan(
     candidate_card = _candidate_card(query_name, candidate_query_cards)
     template = sql_template_registry.get(query_name or "")
     handler_key = str((candidate_card or {}).get("handler_key") or "")
-    requires_sql_template = handler_key == "query_bom_cost" or not handler_key
+    transport = str((candidate_card or {}).get("transport") or "in-process")
+    is_http_tool = transport == "http"
+    requires_sql_template = handler_key == "query_bom_cost" or (
+        not handler_key and not is_http_tool
+    )
 
     query_exists_in_registry = (query_name in sql_template_registry) if requires_sql_template else True
     query_exists_in_candidate_cards = query_name in _candidate_query_names(
@@ -188,6 +192,7 @@ def validate_query_plan(
     handler_valid = (
         plan.decision != "call_query_template"
         or handler_key in EXECUTABLE_HANDLER_KEYS
+        or is_http_tool
         or requires_sql_template
     )
 

@@ -16,6 +16,7 @@ router = APIRouter(prefix="/mcp-tools", tags=["mcp-tools"])
 
 McpToolStatus = Literal["enabled", "disabled"]
 McpTransport = Literal["in-process", "stdio", "http"]
+McpMethod = Literal["GET", "POST"]
 
 
 class McpToolOut(BaseModel):
@@ -27,6 +28,7 @@ class McpToolOut(BaseModel):
     server_name: str = Field(alias="serverName")
     description: str
     transport: McpTransport
+    method: McpMethod
     endpoint: str
     template_id: str = Field(alias="templateId")
     timeout_sec: int = Field(alias="timeoutSec")
@@ -46,6 +48,7 @@ class McpToolCreate(BaseModel):
     server_name: str = Field(alias="serverName", min_length=1)
     description: str = ""
     transport: McpTransport = "in-process"
+    method: McpMethod = "POST"
     endpoint: str = ""
     template_id: str = Field(default="", alias="templateId")
     timeout_sec: int = Field(default=10, alias="timeoutSec", gt=0)
@@ -70,6 +73,7 @@ def _out(tool: McpTool) -> McpToolOut:
         serverName=tool.server_name,
         description=tool.description,
         transport=tool.transport,
+        method=tool.method,
         endpoint=tool.endpoint,
         templateId=tool.template_id,
         timeoutSec=tool.timeout_sec,
@@ -106,6 +110,7 @@ async def create_mcp_tool(
             server_name=body.server_name,
             description=body.description,
             transport=body.transport,
+            method=body.method,
             endpoint=body.endpoint,
             template_id=body.template_id,
             timeout_sec=body.timeout_sec,

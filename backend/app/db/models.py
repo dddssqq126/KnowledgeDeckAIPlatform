@@ -267,6 +267,7 @@ class McpTool(Base):
     server_name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     transport: Mapped[str] = mapped_column(Text, nullable=False, default="in-process")
+    method: Mapped[str] = mapped_column(Text, nullable=False, default="POST")
     endpoint: Mapped[str] = mapped_column(Text, nullable=False, default="")
     template_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
     timeout_sec: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=10)

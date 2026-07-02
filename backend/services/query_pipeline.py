@@ -168,6 +168,7 @@ def _format_context_block(
     source = query_result.get("source") or {}
     rows = query_result.get("data") or []
     row_count = query_result.get("row_count", 0)
+    error = query_result.get("error") or result_verification.get("error")
     if result_verification.get("empty_result") or row_count == 0:
         summary = "查無資料"
     else:
@@ -181,6 +182,7 @@ def _format_context_block(
             f"source.database: {source.get('database')}",
             f"source.template_id: {source.get('template_id')}",
             f"source.executed_at: {source.get('executed_at')}",
+            f"error: {error}" if error else "error: None",
         ]
     )
 

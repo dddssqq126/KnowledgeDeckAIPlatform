@@ -158,3 +158,35 @@ def test_validate_query_plan_rejects_low_confidence() -> None:
     assert result.ok is False
     assert result.action == "reject"
     assert result.checks["confidence_passed"] is False
+
+
+def test_validate_query_plan_allows_http_tool_without_handler_or_sql_template() -> None:
+    result = validate_query_plan(
+        query_plan={
+            "decision": "call_query_template",
+            "query_name": "query_http_status",
+            "arguments": {"part_no": "A123"},
+            "missing_args": [],
+            "confidence": 0.9,
+            "reason": "HTTP tool can answer this.",
+            "required_evidence_ids": [],
+        },
+        candidate_query_cards=[
+            {
+                "query_name": "query_http_status",
+                "title": "HTTP Status",
+                "transport": "http",
+                "method": "POST",
+                "required_args": {"part_no": {"type": "string"}},
+                "optional_args": {},
+            }
+        ],
+        sql_template_registry=SQL_TEMPLATE_REGISTRY,
+    )
+
+    assert result.ok is True
+    assert result.action == "execute"
+    assert result.checks["query_exists_in_registry"] is True
+    assert result.checks["sql_template_valid"] is True
+    assert result.checks["handler_valid"] is True
+    assert result.normalized_arguments == {"part_no": "A123"}

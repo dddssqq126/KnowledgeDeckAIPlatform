@@ -27,6 +27,19 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
+    # Comma-separated base URLs that dynamically registered HTTP tools may call.
+    # Defaults to loopback/testserver so local tools work out of the box without
+    # allowing arbitrary external SSRF targets.
+    mcp_tool_allowed_base_urls: str = "http://localhost,http://127.0.0.1,http://testserver"
+
+    @property
+    def mcp_tool_allowed_base_urls_list(self) -> list[str]:
+        return [
+            url.strip().rstrip("/")
+            for url in self.mcp_tool_allowed_base_urls.split(",")
+            if url.strip()
+        ]
+
     storage_bucket: str = "knowledgedeck"
     local_storage_root: str = "/var/lib/knowledgedeck-storage"
 

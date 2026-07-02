@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.db import base as db_base
 from app.db.base import Base
-from app.db.models import ChatSession, User
+from app.db.models import ChatSession, McpTool, User
 from app.features.chat.api import chat as chat_api
 from app.features.mcp_tools.services.tool_service import seed_builtin_tools
 from app.main import create_app
@@ -224,6 +224,76 @@ async def test_chat_stream_passes_seeded_llm_info_tool_cards(
         card["query_name"] for card in captured["query_cards"]
     }
     assert "google/gemma-4-E4B-it" in captured["context"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_passes_enabled_http_tool_cards_only(
+    http_client: AsyncClient, db_session: AsyncSession, alice: User, monkeypatch
+) -> None:
+    db_session.add_all(
+        [
+            McpTool(
+                owner_user_id=alice.id,
+                name="HTTP Status",
+                query_name="query_http_status",
+                server_name="http_status_server",
+                description="Looks up status via HTTP.",
+                transport="http",
+                method="POST",
+                endpoint="http://localhost:8080/tools/status",
+                template_id="query_http_status:v1",
+                timeout_sec=5,
+                status="enabled",
+                input_schema={"part_no": "string"},
+                output_schema={"status": "string"},
+                built_in=False,
+                handler_key="",
+            ),
+            McpTool(
+                owner_user_id=alice.id,
+                name="Disabled HTTP Status",
+                query_name="query_disabled_http_status",
+                server_name="http_status_server",
+                description="Disabled lookup.",
+                transport="http",
+                method="POST",
+                endpoint="http://localhost:8080/tools/disabled-status",
+                template_id="query_disabled_http_status:v1",
+                timeout_sec=5,
+                status="disabled",
+                input_schema={"part_no": "string"},
+                output_schema={"status": "string"},
+                built_in=False,
+                handler_key="",
+            ),
+        ]
+    )
+    await db_session.commit()
+    chat = await make_chat(db_session, alice)
+    captured: dict[str, Any] = {}
+    _patch_rag(monkeypatch)
+
+    def fake_run(**kwargs):
+        captured["query_cards"] = kwargs.get("query_cards")
+        return QueryPipelineResult(
+            decision="not_applicable",
+            citations=[],
+            debug={},
+        )
+
+    async def fake_stream_answer(**kwargs):
+        captured["query_pipeline_result"] = kwargs.get("query_pipeline_result")
+        yield "fallback answer"
+
+    monkeypatch.setattr(chat_api.query_pipeline, "run", fake_run)
+    monkeypatch.setattr(chat_api.chat_service, "stream_answer", fake_stream_answer)
+
+    res = await _post_stream(http_client, alice, chat, "Check A123 status")
+
+    assert res.status_code == 200
+    query_names = {card["query_name"] for card in captured["query_cards"]}
+    assert "query_http_status" in query_names
+    assert "query_disabled_http_status" not in query_names
 
 
 @pytest.mark.asyncio

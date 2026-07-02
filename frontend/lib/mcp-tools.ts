@@ -4,6 +4,7 @@ import { api } from "./api";
 
 export type McpToolStatus = "enabled" | "disabled";
 export type McpTransport = "in-process" | "stdio" | "http";
+export type McpMethod = "GET" | "POST";
 
 export type McpTool = {
   id: number;
@@ -12,6 +13,7 @@ export type McpTool = {
   serverName: string;
   description: string;
   transport: McpTransport;
+  method: McpMethod;
   endpoint: string;
   templateId: string;
   timeoutSec: number;
@@ -29,6 +31,7 @@ export type McpToolDraft = {
   serverName: string;
   description: string;
   transport: McpTransport;
+  method: McpMethod;
   endpoint: string;
   templateId: string;
   timeoutSec: number;

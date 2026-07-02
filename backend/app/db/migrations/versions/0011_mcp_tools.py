@@ -31,6 +31,7 @@ def upgrade() -> None:
         sa.Column("server_name", sa.Text(), nullable=False),
         sa.Column("description", sa.Text(), nullable=False),
         sa.Column("transport", sa.Text(), nullable=False, server_default="in-process"),
+        sa.Column("method", sa.Text(), nullable=False, server_default="POST"),
         sa.Column("endpoint", sa.Text(), nullable=False, server_default=""),
         sa.Column("template_id", sa.Text(), nullable=False, server_default=""),
         sa.Column("timeout_sec", sa.Integer(), nullable=False, server_default="10"),

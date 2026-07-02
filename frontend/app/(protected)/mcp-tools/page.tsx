@@ -14,6 +14,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   deleteMcpTool,
   loadMcpTools,
+  type McpMethod,
   type McpTool,
   type McpToolDraft,
   type McpTransport,
@@ -28,6 +29,7 @@ const blankDraft: McpToolDraft = {
   serverName: "business_query_server",
   description: "",
   transport: "in-process",
+  method: "POST",
   endpoint: "backend/mcp_servers/business_query_server.py",
   templateId: "",
   timeoutSec: 10,
@@ -211,7 +213,14 @@ export default function McpToolsPage() {
                 <select
                   value={draft.transport}
                   onChange={(e) =>
-                    setDraft({ ...draft, transport: e.target.value as McpTransport })
+                    setDraft({
+                      ...draft,
+                      transport: e.target.value as McpTransport,
+                      endpoint:
+                        e.target.value === "http"
+                          ? "http://localhost:8080/tool"
+                          : draft.endpoint,
+                    })
                   }
                   className="field-input"
                 >
@@ -220,6 +229,21 @@ export default function McpToolsPage() {
                   <option value="http">http</option>
                 </select>
               </Field>
+              <Field label="Method">
+                <select
+                  value={draft.method}
+                  onChange={(e) =>
+                    setDraft({ ...draft, method: e.target.value as McpMethod })
+                  }
+                  className="field-input"
+                  disabled={draft.transport !== "http"}
+                >
+                  <option value="POST">POST</option>
+                  <option value="GET">GET</option>
+                </select>
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
               <Field label="Timeout">
                 <input
                   type="number"
@@ -445,6 +469,8 @@ function ToolDetails({ tool }: { tool: McpTool | null }) {
         <dd className="truncate">{tool.serverName}</dd>
         <dt className="text-muted-foreground">Transport</dt>
         <dd>{tool.transport}</dd>
+        <dt className="text-muted-foreground">Method</dt>
+        <dd>{tool.method}</dd>
         <dt className="text-muted-foreground">Endpoint</dt>
         <dd className="truncate font-mono text-xs">{tool.endpoint}</dd>
         <dt className="text-muted-foreground">Template</dt>
