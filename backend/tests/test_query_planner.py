@@ -146,3 +146,22 @@ def test_build_query_planner_prompt_removes_auth_scope_and_risk_level() -> None:
     card = payload["candidate_query_cards"][0]
     assert "auth_scope" not in card
     assert "risk_level" not in card
+
+
+def test_build_query_planner_prompt_instructs_llm_to_extract_tool_arguments() -> None:
+    system_prompt, user_prompt = build_query_planner_prompt(
+        user_query="Check BOM cost for A123 in P01",
+        evidence_pack=_evidence_pack(),
+        candidate_query_cards=_candidate_query_cards(),
+    )
+
+    assert "Extract tool arguments from user_query first" in system_prompt
+    assert "using exactly the names from the" in system_prompt
+    assert "Do not invent placeholder values" in system_prompt
+
+    payload = json.loads(user_prompt)
+    card = payload["candidate_query_cards"][0]
+    assert card["required_args"] == {
+        "part_no": {"type": "string"},
+        "project_id": {"type": "string"},
+    }

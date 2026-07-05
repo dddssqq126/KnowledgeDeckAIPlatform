@@ -160,23 +160,22 @@ def test_validate_query_plan_rejects_low_confidence() -> None:
     assert result.checks["confidence_passed"] is False
 
 
-def test_validate_query_plan_allows_http_tool_without_handler_or_sql_template() -> None:
+def test_validate_query_plan_allows_mcp_sse_tool_without_handler_or_sql_template() -> None:
     result = validate_query_plan(
         query_plan={
             "decision": "call_query_template",
-            "query_name": "query_http_status",
+            "query_name": "query_mcp_status",
             "arguments": {"part_no": "A123"},
             "missing_args": [],
             "confidence": 0.9,
-            "reason": "HTTP tool can answer this.",
+            "reason": "MCP tool can answer this.",
             "required_evidence_ids": [],
         },
         candidate_query_cards=[
             {
-                "query_name": "query_http_status",
-                "title": "HTTP Status",
-                "transport": "http",
-                "method": "POST",
+                "query_name": "query_mcp_status",
+                "title": "MCP Status",
+                "transport": "mcp-sse",
                 "required_args": {"part_no": {"type": "string"}},
                 "optional_args": {},
             }

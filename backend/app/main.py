@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.features.rag.api.admin import router as admin_router
 from app.features.rag.api.inspect import router as rag_inspect_router
-from app.features.mcp_tools.api.tools import router as mcp_tools_router
 from app.shared.api.auth import router as auth_router
 from app.features.chat.api.chat import router as chat_router
 from app.features.knowledge_bases.api.files import router as files_router
@@ -35,7 +34,6 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(slide_sessions_router)
     app.include_router(llm_info_router)
-    app.include_router(mcp_tools_router)
     app.include_router(admin_router)
     app.include_router(rag_inspect_router)
     return app

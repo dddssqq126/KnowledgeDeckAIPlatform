@@ -651,13 +651,7 @@ async def stream_chat(
 
             if use_rag:
                 try:
-                    async with async_session_factory()() as tool_session:
-                        tools = await tool_service.list_visible_tools(
-                            tool_session,
-                            owner_user_id=user_id,
-                            enabled_only=True,
-                        )
-                    query_cards = tool_service.tools_to_query_cards(tools)
+                    query_cards = tool_service.list_remote_tool_cards()
                     query_pipeline_result = query_pipeline.run(
                         user_id=user_id,
                         user_message=user_message,

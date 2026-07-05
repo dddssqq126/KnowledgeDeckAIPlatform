@@ -5,7 +5,6 @@ import {
   Library,
   MessageSquare,
   Presentation,
-  PlugZap,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect } from "react";
@@ -78,7 +77,7 @@ export default function DashboardPage() {
           />
         </div>
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <ModuleCard
             href="/knowledge-bases"
             icon={Library}
@@ -101,14 +100,6 @@ export default function DashboardPage() {
             title="Slide Maker"
             body={
               "Generate a slide outline from a single prompt, optionally grounded in your knowledge bases. The mock release downloads the outline as text; Presenton-rendered PPTX is on the roadmap."
-            }
-          />
-          <ModuleCard
-            href="/mcp-tools"
-            icon={PlugZap}
-            title="MCP Tools"
-            body={
-              "Register and manage fixed business query tools used by the chat query pipeline."
             }
           />
         </div>

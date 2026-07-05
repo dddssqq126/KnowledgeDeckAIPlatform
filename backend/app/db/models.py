@@ -255,59 +255,6 @@ class ChatSessionShare(Base):
     )
 
 
-class McpTool(Base):
-    __tablename__ = "mcp_tools"
-
-    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
-    owner_user_id: Mapped[int | None] = mapped_column(
-        ID_TYPE, ForeignKey("users.id"), nullable=True
-    )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    query_name: Mapped[str] = mapped_column(Text, nullable=False)
-    server_name: Mapped[str] = mapped_column(Text, nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
-    transport: Mapped[str] = mapped_column(Text, nullable=False, default="in-process")
-    method: Mapped[str] = mapped_column(Text, nullable=False, default="POST")
-    endpoint: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    template_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    timeout_sec: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=10)
-    status: Mapped[str] = mapped_column(Text, nullable=False, default="enabled")
-    input_schema: Mapped[dict[str, Any]] = mapped_column(
-        sa.JSON, nullable=False, default=dict
-    )
-    output_schema: Mapped[dict[str, Any]] = mapped_column(
-        sa.JSON, nullable=False, default=dict
-    )
-    built_in: Mapped[bool] = mapped_column(
-        sa.Boolean, nullable=False, server_default=sa.false()
-    )
-    handler_key: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-
-    __table_args__ = (
-        Index(
-            "uq_mcp_tools_global_query_name",
-            "query_name",
-            unique=True,
-            postgresql_where=sa.text("owner_user_id IS NULL"),
-            sqlite_where=sa.text("owner_user_id IS NULL"),
-        ),
-        Index(
-            "uq_mcp_tools_owner_query_name",
-            "owner_user_id",
-            "query_name",
-            unique=True,
-            postgresql_where=sa.text("owner_user_id IS NOT NULL"),
-            sqlite_where=sa.text("owner_user_id IS NOT NULL"),
-        ),
-    )
-
-
 class SlideStatus(enum.Enum):
     OUTLINING = "outlining"
     RENDERING = "rendering"

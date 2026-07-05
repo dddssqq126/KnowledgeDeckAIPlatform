@@ -1,299 +1,276 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Callable, Iterator
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin
 
 import httpx
-from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.db.models import McpTool
-from mcp_servers.business_query_server import query_bom_cost
 
 ENABLED = "enabled"
 DISABLED = "disabled"
-IN_PROCESS = "in-process"
-ALLOWED_STATUSES = {ENABLED, DISABLED}
-ALLOWED_TRANSPORTS = {IN_PROCESS, "stdio", "http"}
-ALLOWED_HTTP_METHODS = {"GET", "POST"}
-EXECUTABLE_HANDLER_KEYS = {"llm_info", "query_bom_cost"}
-
-SYSTEM_LLM_INFO_TOOL: dict[str, Any] = {
-    "name": "System LLM Info",
-    "query_name": "query_llm_info",
-    "server_name": "system_info_server",
-    "description": (
-        "Returns the configured chat LLM label and model id for this "
-        "KnowledgeDeck system. Use when the user asks what LLM/model this "
-        "system uses, what model it is based on, or asks for system LLM info."
-    ),
-    "transport": IN_PROCESS,
-    "method": "POST",
-    "endpoint": "app.shared.api.llm_info",
-    "template_id": "query_llm_info:v1",
-    "timeout_sec": 5,
-    "status": ENABLED,
-    "input_schema": {},
-    "output_schema": {
-        "label": "string",
-        "model_id": "string",
-    },
-    "built_in": True,
-    "handler_key": "llm_info",
-}
-
-BUILT_IN_TOOLS: tuple[dict[str, Any], ...] = (
-    SYSTEM_LLM_INFO_TOOL,
-    {
-        "name": "BOM Cost",
-        "query_name": "query_bom_cost",
-        "server_name": "business_query_server",
-        "description": "Fixed query template for BOM cost lookup by part number.",
-        "transport": IN_PROCESS,
-        "method": "POST",
-        "endpoint": "backend/mcp_servers/business_query_server.py",
-        "template_id": "query_bom_cost:v1",
-        "timeout_sec": 10,
-        "status": ENABLED,
-        "input_schema": {
-            "part_no": "string",
-        },
-        "output_schema": {
-            "part_no": "string",
-            "component_part_no": "string",
-            "quantity": "number",
-            "unit_cost": "number",
-            "extended_cost": "number",
-        },
-        "built_in": True,
-        "handler_key": "query_bom_cost",
-    },
-)
+MCP_SSE_TRANSPORT = "mcp-sse"
 
 
-class ToolRegistrationError(ValueError):
-    code: str
+class McpToolError(RuntimeError):
+    """Raised when the external MCP server cannot complete a JSON-RPC request."""
 
-    def __init__(self, code: str) -> None:
-        self.code = code
-        super().__init__(code)
+
+class McpSseSession:
+    def __init__(
+        self,
+        *,
+        sse_url: str,
+        timeout_sec: float,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self.sse_url = sse_url
+        self.timeout_sec = timeout_sec
+        self._owns_client = client is None
+        self._client = client or httpx.Client(timeout=timeout_sec)
+        self._stream_context: Any = None
+        self._response: httpx.Response | None = None
+        self._lines: Iterator[str] | None = None
+        self._message_url: str | None = None
+        self._next_id = 1
+
+    def __enter__(self) -> "McpSseSession":
+        self._stream_context = self._client.stream("GET", self.sse_url)
+        self._response = self._stream_context.__enter__()
+        self._response.raise_for_status()
+        self._lines = self._response.iter_lines()
+        event, data = self._read_event()
+        if event != "endpoint" or not data:
+            raise McpToolError("mcp_sse_endpoint_missing")
+        self._message_url = urljoin(self.sse_url, data)
+        self._initialize()
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        if self._stream_context is not None:
+            self._stream_context.__exit__(exc_type, exc, tb)
+        if self._owns_client:
+            self._client.close()
+
+    def list_tools(self) -> list[dict[str, Any]]:
+        result = self._request("tools/list")
+        tools = result.get("tools", [])
+        if not isinstance(tools, list):
+            raise McpToolError("mcp_tools_list_invalid")
+        return [tool for tool in tools if isinstance(tool, dict)]
+
+    def call_tool(self, *, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._request(
+            "tools/call",
+            {"name": name, "arguments": arguments},
+        )
+
+    def _initialize(self) -> None:
+        settings = get_settings()
+        self._request(
+            "initialize",
+            {
+                "protocolVersion": settings.mcp_protocol_version,
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "KnowledgeDeck",
+                    "version": "0.1.0",
+                },
+            },
+        )
+        self._post(
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {},
+            }
+        )
+
+    def _request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        request_id = self._next_id
+        self._next_id += 1
+        self._post(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": method,
+                "params": params or {},
+            }
+        )
+        while True:
+            event, data = self._read_event()
+            if event != "message" or not data:
+                continue
+            try:
+                payload = json.loads(data)
+            except json.JSONDecodeError as exc:
+                raise McpToolError("mcp_message_not_json") from exc
+            if payload.get("id") != request_id:
+                continue
+            if payload.get("error") is not None:
+                raise McpToolError(str(payload["error"]))
+            result = payload.get("result", {})
+            if not isinstance(result, dict):
+                raise McpToolError("mcp_result_invalid")
+            return result
+
+    def _post(self, payload: dict[str, Any]) -> None:
+        if not self._message_url:
+            raise McpToolError("mcp_message_endpoint_missing")
+        response = self._client.post(self._message_url, json=payload)
+        response.raise_for_status()
+
+    def _read_event(self) -> tuple[str | None, str]:
+        if self._lines is None:
+            raise McpToolError("mcp_sse_not_connected")
+
+        event: str | None = None
+        data: list[str] = []
+        for raw_line in self._lines:
+            line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+            if line == "":
+                if event is not None or data:
+                    return event, "\n".join(data)
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("event:"):
+                event = line.removeprefix("event:").strip()
+            elif line.startswith("data:"):
+                data.append(line.removeprefix("data:").lstrip())
+        raise McpToolError("mcp_sse_closed")
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _normalize_schema(schema: dict[str, Any] | None) -> dict[str, str]:
-    if not schema:
-        return {}
-    return {str(key): str(value) for key, value in schema.items()}
-
-
-def _validate_tool_payload(
-    *,
-    name: str,
-    query_name: str,
-    server_name: str,
-    transport: str,
-    method: str,
-    timeout_sec: int,
-    status: str = ENABLED,
-) -> None:
-    if not name.strip() or not query_name.strip() or not server_name.strip():
-        raise ToolRegistrationError("required_fields_missing")
-    if transport not in ALLOWED_TRANSPORTS:
-        raise ToolRegistrationError("unsupported_transport")
-    if method.upper() not in ALLOWED_HTTP_METHODS:
-        raise ToolRegistrationError("unsupported_method")
-    if status not in ALLOWED_STATUSES:
-        raise ToolRegistrationError("unsupported_status")
-    if timeout_sec <= 0:
-        raise ToolRegistrationError("timeout_must_be_positive")
-
-
-async def seed_builtin_tools(session: AsyncSession) -> None:
-    for payload in BUILT_IN_TOOLS:
-        existing = await session.scalar(
-            select(McpTool).where(
-                McpTool.owner_user_id.is_(None),
-                McpTool.query_name == payload["query_name"],
-            )
-        )
-        if existing is None:
-            session.add(McpTool(owner_user_id=None, **payload))
-            continue
-
-        # Keep built-in definitions fresh while preserving operator status changes.
-        existing.name = payload["name"]
-        existing.server_name = payload["server_name"]
-        existing.description = payload["description"]
-        existing.transport = payload["transport"]
-        existing.method = payload["method"]
-        existing.endpoint = payload["endpoint"]
-        existing.template_id = payload["template_id"]
-        existing.timeout_sec = payload["timeout_sec"]
-        existing.input_schema = dict(payload["input_schema"])
-        existing.output_schema = dict(payload["output_schema"])
-        existing.built_in = True
-        existing.handler_key = payload["handler_key"]
-        existing.updated_at = _now()
-
-
-async def list_visible_tools(
-    session: AsyncSession,
-    *,
-    owner_user_id: int,
-    enabled_only: bool = False,
-) -> list[McpTool]:
-    stmt = select(McpTool).where(
-        or_(McpTool.owner_user_id.is_(None), McpTool.owner_user_id == owner_user_id)
-    )
-    if enabled_only:
-        stmt = stmt.where(McpTool.status == ENABLED)
-    rows = await session.scalars(stmt.order_by(McpTool.built_in.desc(), McpTool.name.asc()))
-    return list(rows.all())
-
-
-async def get_owned_or_global_tool(
-    session: AsyncSession,
-    *,
-    owner_user_id: int,
-    tool_id: int,
-) -> McpTool | None:
-    return await session.scalar(
-        select(McpTool).where(
-            McpTool.id == tool_id,
-            or_(McpTool.owner_user_id.is_(None), McpTool.owner_user_id == owner_user_id),
-        )
-    )
-
-
-async def create_custom_tool(
-    session: AsyncSession,
-    *,
-    owner_user_id: int,
-    name: str,
-    query_name: str,
-    server_name: str,
-    description: str,
-    transport: str,
-    method: str,
-    endpoint: str,
-    template_id: str,
-    timeout_sec: int,
-    input_schema: dict[str, Any] | None,
-    output_schema: dict[str, Any] | None,
-) -> McpTool:
-    name = name.strip()
-    query_name = query_name.strip()
-    server_name = server_name.strip()
-    transport = transport.strip() or IN_PROCESS
-    method = method.strip().upper() or "POST"
-    endpoint = endpoint.strip()
-    _validate_tool_payload(
-        name=name,
-        query_name=query_name,
-        server_name=server_name,
-        transport=transport,
-        method=method,
-        timeout_sec=timeout_sec,
-    )
-    if transport == "http" and not endpoint:
-        raise ToolRegistrationError("endpoint_required")
-    duplicate = await session.scalar(
-        select(McpTool).where(
-            McpTool.query_name == query_name,
-            or_(McpTool.owner_user_id.is_(None), McpTool.owner_user_id == owner_user_id),
-        )
-    )
-    if duplicate is not None:
-        raise ToolRegistrationError("duplicate_query_name")
-
-    tool = McpTool(
-        owner_user_id=owner_user_id,
-        name=name,
-        query_name=query_name,
-        server_name=server_name,
-        description=description.strip(),
-        transport=transport,
-        method=method,
-        endpoint=endpoint,
-        template_id=template_id.strip(),
-        timeout_sec=timeout_sec,
-        status=ENABLED,
-        input_schema=_normalize_schema(input_schema),
-        output_schema=_normalize_schema(output_schema),
-        built_in=False,
-        handler_key="",
-    )
-    session.add(tool)
-    await session.flush()
-    return tool
-
-
-async def set_tool_status(
-    session: AsyncSession,
-    *,
-    tool: McpTool,
-    status: str,
-) -> McpTool:
-    if status not in ALLOWED_STATUSES:
-        raise ToolRegistrationError("unsupported_status")
-    tool.status = status
-    tool.updated_at = _now()
-    await session.flush()
-    return tool
-
-
-def tool_to_query_card(tool: McpTool) -> dict[str, Any]:
-    required_args = {
-        name: {"type": type_name, "description": f"{name} argument"}
-        for name, type_name in (tool.input_schema or {}).items()
-    }
-    return {
-        "query_name": tool.query_name,
-        "title": tool.name,
-        "auth_scope": "global" if tool.owner_user_id is None else "owner",
-        "description": tool.description,
-        "sql_type": "tool",
-        "when_to_use": [tool.description],
-        "do_not_use_when": ["The user asks an unrelated documentation question."],
-        "required_args": required_args,
-        "optional_args": {},
-        "output_schema": tool.output_schema or {},
-        "empty_result_policy": {"answer": "No rows were returned by the tool."},
-        "row_limit": 1 if tool.handler_key == "llm_info" else 500,
-        "transport": tool.transport,
-        "method": tool.method,
-        "status": tool.status,
-        "handler_key": tool.handler_key,
-        "template_id": tool.template_id,
-        "timeout_sec": tool.timeout_sec,
-    }
-
-
-def tools_to_query_cards(tools: list[McpTool]) -> list[dict[str, Any]]:
-    return [tool_to_query_card(tool) for tool in tools if tool.status == ENABLED]
-
-
-def _url_allowed(endpoint: str, allowed_base_urls: list[str]) -> bool:
-    target = urlparse(endpoint)
-    if target.scheme not in {"http", "https"} or not target.netloc:
-        return False
-
-    for base in allowed_base_urls:
-        parsed = urlparse(base)
-        if parsed.scheme != target.scheme or parsed.hostname != target.hostname:
-            continue
-        if parsed.port is not None and parsed.port != target.port:
-            continue
-        base_path = parsed.path.rstrip("/")
-        if base_path and not target.path.startswith(f"{base_path}/") and target.path != base_path:
-            continue
-        return True
+def _contains_raw_sql(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(key == "raw_sql" or _contains_raw_sql(item) for key, item in value.items())
+    if isinstance(value, list):
+        return any(_contains_raw_sql(item) for item in value)
     return False
+
+
+def _schema_type(spec: Any) -> str:
+    if isinstance(spec, dict):
+        raw_type = spec.get("type") or "any"
+        if isinstance(raw_type, list):
+            return " | ".join(str(item) for item in raw_type)
+        return str(raw_type)
+    return str(spec or "any")
+
+
+def _arg_spec(spec: Any) -> dict[str, Any]:
+    if isinstance(spec, dict):
+        payload: dict[str, Any] = {"type": _schema_type(spec)}
+        if spec.get("description"):
+            payload["description"] = str(spec["description"])
+        if "default" in spec:
+            payload["default"] = spec["default"]
+        if "enum" in spec and isinstance(spec["enum"], list):
+            payload["allowed_values"] = spec["enum"]
+        return payload
+    return {"type": _schema_type(spec)}
+
+
+def _split_input_schema(input_schema: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    if not isinstance(input_schema, dict):
+        return {}, {}
+
+    properties = input_schema.get("properties")
+    if isinstance(properties, dict):
+        required_names = {
+            str(name) for name in input_schema.get("required", []) if name is not None
+        }
+        required: dict[str, Any] = {}
+        optional: dict[str, Any] = {}
+        for name, spec in properties.items():
+            target = required if str(name) in required_names else optional
+            target[str(name)] = _arg_spec(spec)
+        return required, optional
+
+    return {str(name): _arg_spec(spec) for name, spec in input_schema.items()}, {}
+
+
+def _flat_output_schema(output_schema: Any) -> dict[str, str]:
+    if not isinstance(output_schema, dict):
+        return {}
+    properties = output_schema.get("properties")
+    if isinstance(properties, dict):
+        return {str(name): _schema_type(spec) for name, spec in properties.items()}
+    return {str(name): _schema_type(spec) for name, spec in output_schema.items()}
+
+
+def tool_to_query_card(tool: dict[str, Any]) -> dict[str, Any]:
+    input_schema = tool.get("inputSchema") or tool.get("input_schema") or {}
+    output_schema = tool.get("outputSchema") or tool.get("output_schema") or {}
+    required_args, optional_args = _split_input_schema(input_schema)
+    query_name = str(tool.get("queryName") or tool.get("query_name") or tool.get("name") or "")
+    title = str(tool.get("title") or tool.get("name") or query_name)
+    description = str(tool.get("description") or "")
+
+    return {
+        "query_name": query_name,
+        "title": title,
+        "auth_scope": str(tool.get("auth_scope") or "mcp-sse"),
+        "description": description,
+        "sql_type": str(tool.get("sql_type") or tool.get("sqlType") or "tool"),
+        "when_to_use": tool.get("when_to_use")
+        or tool.get("whenToUse")
+        or ([description] if description else [f"Use {title}."]),
+        "do_not_use_when": tool.get("do_not_use_when")
+        or tool.get("doNotUseWhen")
+        or ["The user asks an unrelated documentation question."],
+        "required_args": required_args,
+        "optional_args": optional_args,
+        "output_schema": _flat_output_schema(output_schema),
+        "empty_result_policy": tool.get("empty_result_policy")
+        or tool.get("emptyResultPolicy")
+        or {"answer": "No rows were returned by the tool."},
+        "row_limit": int(tool.get("row_limit") or tool.get("rowLimit") or 500),
+        "transport": MCP_SSE_TRANSPORT,
+        "status": str(tool.get("status") or ENABLED),
+        "handler_key": "",
+        "template_id": str(tool.get("templateId") or tool.get("template_id") or f"{query_name}:mcp"),
+        "timeout_sec": int(tool.get("timeoutSec") or tool.get("timeout_sec") or get_settings().mcp_sse_timeout_sec),
+        "mcp_tool_name": str(tool.get("name") or query_name),
+    }
+
+
+def tools_to_query_cards(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cards = [tool_to_query_card(tool) for tool in tools]
+    return [
+        card
+        for card in cards
+        if card["query_name"] and str(card.get("status") or ENABLED) == ENABLED
+    ]
+
+
+def list_remote_tools(
+    *,
+    client_factory: Callable[[], McpSseSession] | None = None,
+) -> list[dict[str, Any]]:
+    settings = get_settings()
+    factory = client_factory or (
+        lambda: McpSseSession(
+            sse_url=settings.mcp_sse_url,
+            timeout_sec=settings.mcp_sse_timeout_sec,
+        )
+    )
+    with factory() as client:
+        return client.list_tools()
+
+
+def list_remote_tool_cards(
+    *,
+    client_factory: Callable[[], McpSseSession] | None = None,
+) -> list[dict[str, Any]]:
+    return tools_to_query_cards(list_remote_tools(client_factory=client_factory))
 
 
 def _columns(rows: list[dict[str, Any]]) -> list[str]:
@@ -309,10 +286,7 @@ def _columns(rows: list[dict[str, Any]]) -> list[str]:
 
 def _rows_from_json(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
-        rows: list[dict[str, Any]] = []
-        for item in payload:
-            rows.append(item if isinstance(item, dict) else {"value": item})
-        return rows
+        return [item if isinstance(item, dict) else {"value": item} for item in payload]
     if isinstance(payload, dict):
         data = payload.get("data")
         if isinstance(data, list):
@@ -336,7 +310,7 @@ def _error_result(
         "columns": [],
         "data": [],
         "source": {
-            "database": "http",
+            "database": "mcp-sse",
             "template_id": template_id,
             "executed_at": _now().isoformat(),
         },
@@ -345,74 +319,67 @@ def _error_result(
     }
 
 
-def _execute_http_tool(
+def _payload_from_call_result(result: dict[str, Any]) -> Any:
+    if "structuredContent" in result:
+        return result["structuredContent"]
+    if "structured_content" in result:
+        return result["structured_content"]
+
+    content = result.get("content")
+    if isinstance(content, list):
+        values: list[Any] = []
+        for item in content:
+            if not isinstance(item, dict):
+                values.append(item)
+                continue
+            if "json" in item:
+                values.append(item["json"])
+                continue
+            if item.get("type") == "text" and "text" in item:
+                text = str(item["text"])
+                try:
+                    values.append(json.loads(text))
+                except json.JSONDecodeError:
+                    values.append({"text": text})
+        if len(values) == 1:
+            return values[0]
+        return values
+
+    return result
+
+
+def _normalize_call_result(
     *,
-    tool: dict[str, Any],
     query_name: str,
     arguments: dict[str, Any],
-    http_client: httpx.Client | None = None,
+    template_id: str | None,
+    result: dict[str, Any],
 ) -> dict[str, Any]:
-    endpoint = str(tool.get("endpoint") or "")
-    template_id = str(tool.get("template_id") or "") or None
-    allowed = get_settings().mcp_tool_allowed_base_urls_list
-    if not _url_allowed(endpoint, allowed):
+    if result.get("isError") is True:
         return _error_result(
             query_name=query_name,
             arguments=arguments,
             template_id=template_id,
-            error="endpoint_not_allowed",
+            error=str(_payload_from_call_result(result)),
         )
 
-    method = str(tool.get("method") or "POST").upper()
-    timeout_sec = int(tool.get("timeout_sec") or 10)
-    owns_client = http_client is None
-    client = http_client or httpx.Client(timeout=timeout_sec)
-    try:
-        if method == "GET":
-            response = client.get(endpoint, params=arguments)
-        elif method == "POST":
-            response = client.post(endpoint, json=arguments)
-        else:
-            return _error_result(
-                query_name=query_name,
-                arguments=arguments,
-                template_id=template_id,
-                error=f"unsupported_method: {method}",
-            )
-        response.raise_for_status()
-        try:
-            payload = response.json()
-        except ValueError:
-            return _error_result(
-                query_name=query_name,
-                arguments=arguments,
-                template_id=template_id,
-                error="response_not_json",
-            )
-    except httpx.TimeoutException:
-        return _error_result(
-            query_name=query_name,
-            arguments=arguments,
-            template_id=template_id,
-            error="http_timeout",
+    payload = _payload_from_call_result(result)
+    if isinstance(payload, dict) and {"row_count", "data", "status"}.issubset(payload):
+        normalized = dict(payload)
+        normalized.setdefault("query_name", query_name)
+        normalized.setdefault("input", arguments)
+        normalized.setdefault("columns", _columns(_rows_from_json(normalized.get("data"))))
+        normalized.setdefault("warnings", [])
+        normalized.setdefault("error", None)
+        normalized.setdefault(
+            "source",
+            {
+                "database": "mcp-sse",
+                "template_id": template_id,
+                "executed_at": _now().isoformat(),
+            },
         )
-    except httpx.HTTPStatusError as exc:
-        return _error_result(
-            query_name=query_name,
-            arguments=arguments,
-            template_id=template_id,
-            error=f"http_status_{exc.response.status_code}",
-        )
-    except httpx.HTTPError as exc:
-        return _error_result(
-            query_name=query_name,
-            arguments=arguments,
-            template_id=template_id,
-            error=f"http_error: {exc.__class__.__name__}",
-        )
-    finally:
-        if owns_client:
-            client.close()
+        return normalized
 
     rows = _rows_from_json(payload)
     return {
@@ -423,7 +390,7 @@ def _execute_http_tool(
         "columns": _columns(rows),
         "data": rows,
         "source": {
-            "database": "http",
+            "database": "mcp-sse",
             "template_id": template_id,
             "executed_at": _now().isoformat(),
         },
@@ -437,9 +404,9 @@ def execute_registered_tool(
     query_name: str,
     arguments: dict[str, Any],
     tool_cards: list[dict[str, Any]],
-    http_client: httpx.Client | None = None,
+    client_factory: Callable[[], McpSseSession] | None = None,
 ) -> dict[str, Any]:
-    if "raw_sql" in arguments:
+    if _contains_raw_sql(arguments):
         raise ValueError("raw_sql is not allowed")
     tool = next((card for card in tool_cards if card.get("query_name") == query_name), None)
     if tool is None:
@@ -447,41 +414,31 @@ def execute_registered_tool(
     if str(tool.get("status", ENABLED)) != ENABLED:
         raise ValueError("Tool is disabled")
 
-    transport = str(tool.get("transport") or IN_PROCESS)
-    if transport == "http":
-        return _execute_http_tool(
-            tool=tool,
+    settings = get_settings()
+    factory = client_factory or (
+        lambda: McpSseSession(
+            sse_url=settings.mcp_sse_url,
+            timeout_sec=float(tool.get("timeout_sec") or settings.mcp_sse_timeout_sec),
+        )
+    )
+    template_id = str(tool.get("template_id") or "") or None
+    try:
+        with factory() as client:
+            result = client.call_tool(
+                name=str(tool.get("mcp_tool_name") or query_name),
+                arguments=arguments,
+            )
+    except (httpx.HTTPError, McpToolError) as exc:
+        return _error_result(
             query_name=query_name,
             arguments=arguments,
-            http_client=http_client,
+            template_id=template_id,
+            error=f"mcp_error: {exc.__class__.__name__}",
         )
-    if transport != IN_PROCESS:
-        raise ValueError("Only in-process and HTTP tools are executable in this version")
 
-    handler_key = str(tool.get("handler_key") or "")
-    if handler_key not in EXECUTABLE_HANDLER_KEYS:
-        raise ValueError(f"Unsupported tool handler: {handler_key or 'none'}")
-
-    if handler_key == "llm_info":
-        settings = get_settings()
-        row = {"label": settings.llm_model_label, "model_id": settings.llm_model}
-        return {
-            "query_name": query_name,
-            "status": "ok",
-            "input": arguments,
-            "row_count": 1,
-            "columns": list(row),
-            "data": [row],
-            "source": {
-                "database": "settings",
-                "template_id": tool.get("template_id") or "query_llm_info:v1",
-                "executed_at": _now().isoformat(),
-            },
-            "warnings": [],
-            "error": None,
-        }
-
-    if handler_key == "query_bom_cost":
-        return query_bom_cost(arguments).model_dump()
-
-    raise ValueError(f"Unsupported tool handler: {handler_key}")
+    return _normalize_call_result(
+        query_name=query_name,
+        arguments=arguments,
+        template_id=template_id,
+        result=result,
+    )

@@ -10,6 +10,7 @@ from sql_templates.registry import SqlTemplate, validate_sql_template
 
 ValidatorAction = Literal["execute", "ask_clarification", "reject"]
 EXECUTABLE_HANDLER_KEYS = {"llm_info", "query_bom_cost"}
+REMOTE_TOOL_TRANSPORTS = {"mcp-sse", "mcp", "sse"}
 
 
 class QueryValidationResult(BaseModel):
@@ -170,9 +171,9 @@ def validate_query_plan(
     template = sql_template_registry.get(query_name or "")
     handler_key = str((candidate_card or {}).get("handler_key") or "")
     transport = str((candidate_card or {}).get("transport") or "in-process")
-    is_http_tool = transport == "http"
+    is_remote_tool = transport in REMOTE_TOOL_TRANSPORTS
     requires_sql_template = handler_key == "query_bom_cost" or (
-        not handler_key and not is_http_tool
+        not handler_key and not is_remote_tool
     )
 
     query_exists_in_registry = (query_name in sql_template_registry) if requires_sql_template else True
@@ -192,7 +193,7 @@ def validate_query_plan(
     handler_valid = (
         plan.decision != "call_query_template"
         or handler_key in EXECUTABLE_HANDLER_KEYS
-        or is_http_tool
+        or is_remote_tool
         or requires_sql_template
     )
 

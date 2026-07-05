@@ -55,7 +55,16 @@ Rules:
 - Do not write SQL.
 - Do not output raw_sql.
 - Choose query_name only from candidate_query_cards.
-- Use missing_args for any required argument that is not available.
+- Read the selected tool's required_args and optional_args before planning.
+- Extract tool arguments from user_query first, then evidence_pack if the
+  user_query clearly refers to values found there.
+- Put extracted parameters in arguments using exactly the names from the
+  selected tool's required_args and optional_args.
+- Include optional arguments only when the user explicitly provides them or
+  evidence_pack unambiguously resolves them.
+- Do not invent placeholder values or add argument names that are not in the
+  selected tool card.
+- Use missing_args for any required argument that is not available or ambiguous.
 - For zero-argument tools, use arguments={} and missing_args=[].
 - Use required_evidence_ids for evidence items needed to justify the plan.
 """.strip()
