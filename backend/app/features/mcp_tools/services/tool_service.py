@@ -19,6 +19,71 @@ class McpToolError(RuntimeError):
     """Raised when the external MCP server cannot complete a JSON-RPC request."""
 
 
+def _join_endpoint(base_url: str, suffix: str) -> str:
+    return f"{base_url.rstrip('/')}/{suffix.lstrip('/')}"
+
+
+class McpHttpToolClient:
+    """HTTP client for externally hosted MCP tool endpoints.
+
+    The remote MCP system owns the official server implementation. KnowledgeDeck
+    only calls its fixed tool discovery and invocation endpoints and keeps the
+    existing query argument shape unchanged.
+    """
+
+    def __init__(
+        self,
+        *,
+        sse_url: str,
+        session_id: str,
+        timeout_sec: float,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self.sse_url = sse_url
+        self.session_id = session_id
+        self.timeout_sec = timeout_sec
+        self._owns_client = client is None
+        self._client = client or httpx.Client(timeout=timeout_sec)
+
+    def __enter__(self) -> "McpHttpToolClient":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        if self._owns_client:
+            self._client.close()
+
+    def list_tools(self) -> list[dict[str, Any]]:
+        payload = self._post_endpoint("tools/list", {})
+        tools = payload.get("tools", payload if isinstance(payload, list) else [])
+        if not isinstance(tools, list):
+            raise McpToolError("mcp_tools_list_invalid")
+        return [tool for tool in tools if isinstance(tool, dict)]
+
+    def call_tool(self, *, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        payload = self._post_endpoint(
+            "tools/call",
+            {"name": name, "arguments": arguments},
+        )
+        if not isinstance(payload, dict):
+            raise McpToolError("mcp_call_result_invalid")
+        return payload
+
+    def _post_endpoint(self, suffix: str, payload: dict[str, Any]) -> Any:
+        body = {**payload, "session_id": self.session_id}
+        headers = {
+            "Mcp-Session-Id": self.session_id,
+            "X-Session-Id": self.session_id,
+        }
+        response = self._client.post(
+            _join_endpoint(self.sse_url, suffix), json=body, headers=headers
+        )
+        response.raise_for_status()
+        try:
+            return response.json()
+        except json.JSONDecodeError as exc:
+            raise McpToolError("mcp_response_not_json") from exc
+
+
 class McpSseSession:
     def __init__(
         self,
@@ -89,7 +154,9 @@ class McpSseSession:
             }
         )
 
-    def _request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _request(
+        self, method: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         request_id = self._next_id
         self._next_id += 1
         self._post(
@@ -150,7 +217,9 @@ def _now() -> datetime:
 
 def _contains_raw_sql(value: Any) -> bool:
     if isinstance(value, dict):
-        return any(key == "raw_sql" or _contains_raw_sql(item) for key, item in value.items())
+        return any(
+            key == "raw_sql" or _contains_raw_sql(item) for key, item in value.items()
+        )
     if isinstance(value, list):
         return any(_contains_raw_sql(item) for item in value)
     return False
@@ -210,7 +279,9 @@ def tool_to_query_card(tool: dict[str, Any]) -> dict[str, Any]:
     input_schema = tool.get("inputSchema") or tool.get("input_schema") or {}
     output_schema = tool.get("outputSchema") or tool.get("output_schema") or {}
     required_args, optional_args = _split_input_schema(input_schema)
-    query_name = str(tool.get("queryName") or tool.get("query_name") or tool.get("name") or "")
+    query_name = str(
+        tool.get("queryName") or tool.get("query_name") or tool.get("name") or ""
+    )
     title = str(tool.get("title") or tool.get("name") or query_name)
     description = str(tool.get("description") or "")
 
@@ -236,8 +307,14 @@ def tool_to_query_card(tool: dict[str, Any]) -> dict[str, Any]:
         "transport": MCP_SSE_TRANSPORT,
         "status": str(tool.get("status") or ENABLED),
         "handler_key": "",
-        "template_id": str(tool.get("templateId") or tool.get("template_id") or f"{query_name}:mcp"),
-        "timeout_sec": int(tool.get("timeoutSec") or tool.get("timeout_sec") or get_settings().mcp_sse_timeout_sec),
+        "template_id": str(
+            tool.get("templateId") or tool.get("template_id") or f"{query_name}:mcp"
+        ),
+        "timeout_sec": int(
+            tool.get("timeoutSec")
+            or tool.get("timeout_sec")
+            or get_settings().mcp_sse_timeout_sec
+        ),
         "mcp_tool_name": str(tool.get("name") or query_name),
     }
 
@@ -253,12 +330,13 @@ def tools_to_query_cards(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def list_remote_tools(
     *,
-    client_factory: Callable[[], McpSseSession] | None = None,
+    client_factory: Callable[[], McpHttpToolClient | McpSseSession] | None = None,
 ) -> list[dict[str, Any]]:
     settings = get_settings()
     factory = client_factory or (
-        lambda: McpSseSession(
+        lambda: McpHttpToolClient(
             sse_url=settings.mcp_sse_url,
+            session_id=settings.mcp_sse_session_id,
             timeout_sec=settings.mcp_sse_timeout_sec,
         )
     )
@@ -268,7 +346,7 @@ def list_remote_tools(
 
 def list_remote_tool_cards(
     *,
-    client_factory: Callable[[], McpSseSession] | None = None,
+    client_factory: Callable[[], McpHttpToolClient | McpSseSession] | None = None,
 ) -> list[dict[str, Any]]:
     return tools_to_query_cards(list_remote_tools(client_factory=client_factory))
 
@@ -290,7 +368,9 @@ def _rows_from_json(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, dict):
         data = payload.get("data")
         if isinstance(data, list):
-            return [item if isinstance(item, dict) else {"value": item} for item in data]
+            return [
+                item if isinstance(item, dict) else {"value": item} for item in data
+            ]
         return [payload]
     return [{"value": payload}]
 
@@ -368,7 +448,9 @@ def _normalize_call_result(
         normalized = dict(payload)
         normalized.setdefault("query_name", query_name)
         normalized.setdefault("input", arguments)
-        normalized.setdefault("columns", _columns(_rows_from_json(normalized.get("data"))))
+        normalized.setdefault(
+            "columns", _columns(_rows_from_json(normalized.get("data")))
+        )
         normalized.setdefault("warnings", [])
         normalized.setdefault("error", None)
         normalized.setdefault(
@@ -404,11 +486,13 @@ def execute_registered_tool(
     query_name: str,
     arguments: dict[str, Any],
     tool_cards: list[dict[str, Any]],
-    client_factory: Callable[[], McpSseSession] | None = None,
+    client_factory: Callable[[], McpHttpToolClient | McpSseSession] | None = None,
 ) -> dict[str, Any]:
     if _contains_raw_sql(arguments):
         raise ValueError("raw_sql is not allowed")
-    tool = next((card for card in tool_cards if card.get("query_name") == query_name), None)
+    tool = next(
+        (card for card in tool_cards if card.get("query_name") == query_name), None
+    )
     if tool is None:
         raise KeyError(f"Tool not found for query_name: {query_name}")
     if str(tool.get("status", ENABLED)) != ENABLED:
@@ -416,8 +500,9 @@ def execute_registered_tool(
 
     settings = get_settings()
     factory = client_factory or (
-        lambda: McpSseSession(
+        lambda: McpHttpToolClient(
             sse_url=settings.mcp_sse_url,
+            session_id=settings.mcp_sse_session_id,
             timeout_sec=float(tool.get("timeout_sec") or settings.mcp_sse_timeout_sec),
         )
     )

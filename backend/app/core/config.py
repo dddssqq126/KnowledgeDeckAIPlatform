@@ -29,7 +29,8 @@ class Settings(BaseSettings):
 
     # External MCP server used by chat after RAG retrieval. Tool discovery and
     # tool calls both start from this SSE endpoint.
-    mcp_sse_url: str = "http://localhost:8082/sse"
+    mcp_sse_url: str = "http://10.150.186.9/sse"
+    mcp_sse_session_id: str = "37880f8a4f"
     mcp_sse_timeout_sec: int = 30
     mcp_protocol_version: str = "2024-11-05"
 
