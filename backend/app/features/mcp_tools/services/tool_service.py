@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from collections.abc import Callable, Iterator
 from datetime import datetime, timezone
 from typing import Any
@@ -167,13 +168,8 @@ def _schema_type(spec: Any) -> str:
 
 def _arg_spec(spec: Any) -> dict[str, Any]:
     if isinstance(spec, dict):
-        payload: dict[str, Any] = {"type": _schema_type(spec)}
-        if spec.get("description"):
-            payload["description"] = str(spec["description"])
-        if "default" in spec:
-            payload["default"] = spec["default"]
-        if "enum" in spec and isinstance(spec["enum"], list):
-            payload["allowed_values"] = spec["enum"]
+        payload = deepcopy(spec)
+        payload.setdefault("type", _schema_type(spec))
         return payload
     return {"type": _schema_type(spec)}
 
@@ -206,6 +202,24 @@ def _flat_output_schema(output_schema: Any) -> dict[str, str]:
     return {str(name): _schema_type(spec) for name, spec in output_schema.items()}
 
 
+def _tool_annotations(tool: dict[str, Any]) -> dict[str, Any]:
+    annotations = tool.get("annotations")
+    if isinstance(annotations, dict):
+        return deepcopy(annotations)
+
+    known_annotation_keys = {
+        "readOnlyHint",
+        "destructiveHint",
+        "idempotentHint",
+        "openWorldHint",
+    }
+    return {
+        key: deepcopy(value)
+        for key, value in tool.items()
+        if key in known_annotation_keys
+    }
+
+
 def tool_to_query_card(tool: dict[str, Any]) -> dict[str, Any]:
     input_schema = tool.get("inputSchema") or tool.get("input_schema") or {}
     output_schema = tool.get("outputSchema") or tool.get("output_schema") or {}
@@ -228,7 +242,10 @@ def tool_to_query_card(tool: dict[str, Any]) -> dict[str, Any]:
         or ["The user asks an unrelated documentation question."],
         "required_args": required_args,
         "optional_args": optional_args,
+        "input_schema": deepcopy(input_schema) if isinstance(input_schema, dict) else input_schema,
         "output_schema": _flat_output_schema(output_schema),
+        "output_schema_raw": deepcopy(output_schema) if isinstance(output_schema, dict) else output_schema,
+        "annotations": _tool_annotations(tool),
         "empty_result_policy": tool.get("empty_result_policy")
         or tool.get("emptyResultPolicy")
         or {"answer": "No rows were returned by the tool."},

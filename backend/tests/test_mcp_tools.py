@@ -61,6 +61,7 @@ def test_list_remote_tool_cards_preserves_registration_shape() -> None:
                 "description": "Fixed query template for BOM cost lookup.",
                 "inputSchema": {"part_no": "string"},
                 "outputSchema": {"unit_cost": "number"},
+                "annotations": {"readOnlyHint": True},
                 "templateId": "query_bom_cost:v1",
                 "status": "enabled",
             }
@@ -80,7 +81,10 @@ def test_list_remote_tool_cards_preserves_registration_shape() -> None:
             "do_not_use_when": ["The user asks an unrelated documentation question."],
             "required_args": {"part_no": {"type": "string"}},
             "optional_args": {},
+            "input_schema": {"part_no": "string"},
             "output_schema": {"unit_cost": "number"},
+            "output_schema_raw": {"unit_cost": "number"},
+            "annotations": {"readOnlyHint": True},
             "empty_result_policy": {"answer": "No rows were returned by the tool."},
             "row_limit": 500,
             "transport": "mcp-sse",
@@ -121,7 +125,61 @@ def test_list_remote_tool_cards_accepts_native_mcp_input_schema() -> None:
         "project_id": {"type": "string", "description": "Project id."}
     }
     assert cards[0]["optional_args"] == {"section": {"type": "string"}}
+    assert cards[0]["input_schema"]["required"] == ["project_id"]
     assert cards[0]["transport"] == "mcp-sse"
+
+
+def test_list_remote_tool_cards_preserves_nested_schema_enum_default_and_annotations() -> None:
+    fake = FakeMcpSession(
+        tools=[
+            {
+                "name": "query_complex_status",
+                "description": "Lookup status with filters.",
+                "inputSchema": {
+                    "type": "object",
+                    "required": ["part_no", "filters"],
+                    "properties": {
+                        "part_no": {"type": "string", "description": "Part number."},
+                        "filters": {
+                            "type": "object",
+                            "required": ["region"],
+                            "properties": {
+                                "region": {"type": "string", "enum": ["us", "tw"]},
+                                "include_history": {
+                                    "type": "boolean",
+                                    "default": False,
+                                },
+                            },
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "default": [],
+                        },
+                    },
+                },
+                "outputSchema": {
+                    "type": "object",
+                    "properties": {"status": {"type": "string"}},
+                },
+                "annotations": {"readOnlyHint": True, "openWorldHint": False},
+            }
+        ]
+    )
+
+    card = list_remote_tool_cards(client_factory=lambda: fake)[0]
+
+    assert card["required_args"]["filters"]["properties"]["region"]["enum"] == [
+        "us",
+        "tw",
+    ]
+    assert card["required_args"]["filters"]["properties"]["include_history"][
+        "default"
+    ] is False
+    assert card["optional_args"]["tags"]["items"] == {"type": "string"}
+    assert card["input_schema"]["properties"]["filters"]["type"] == "object"
+    assert card["output_schema_raw"]["properties"]["status"]["type"] == "string"
+    assert card["annotations"] == {"readOnlyHint": True, "openWorldHint": False}
 
 
 def test_execute_registered_tool_calls_selected_mcp_tool() -> None:
@@ -157,6 +215,26 @@ def test_execute_registered_tool_calls_selected_mcp_tool() -> None:
     assert result["columns"] == ["part_no", "unit_cost"]
     assert result["data"] == [{"part_no": "A123", "unit_cost": 12.5}]
     assert result["source"]["database"] == "mcp-sse"
+
+
+def test_execute_registered_tool_uses_discovered_mcp_tool_name() -> None:
+    fake = FakeMcpSession(call_result={"structuredContent": {"status": "ok"}})
+
+    execute_registered_tool(
+        query_name="query_status",
+        arguments={"part_no": "A123"},
+        tool_cards=[
+            {
+                "query_name": "query_status",
+                "transport": "mcp-sse",
+                "status": "enabled",
+                "mcp_tool_name": "status.lookup",
+            }
+        ],
+        client_factory=lambda: fake,
+    )
+
+    assert fake.calls == [{"name": "status.lookup", "arguments": {"part_no": "A123"}}]
 
 
 def test_execute_registered_tool_preserves_query_result_payload() -> None:

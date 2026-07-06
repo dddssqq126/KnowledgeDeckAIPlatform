@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
@@ -43,19 +42,25 @@ def build_query_planner_prompt(
 ) -> tuple[str, str]:
     sanitized_cards = _sanitize_candidate_query_cards(candidate_query_cards)
     system_prompt = """
-You are a query planner. Produce exactly one QueryPlan JSON object.
+You are a query planner for MCP tools discovered from tools/list.
+Produce exactly one QueryPlan JSON object.
 
 Allowed decisions:
 - answer_from_docs: use this for process, policy, definition, or documentation questions.
-- call_query_template: use this when a registered tool or database-backed query
-  template is needed and all required arguments are available.
+- call_query_template: use this when a discovered MCP tool, registered tool, or
+  database-backed query template is needed and all required arguments are available.
 - ask_clarification: use this when required arguments are missing or ambiguous.
 
 Rules:
 - Do not write SQL.
 - Do not output raw_sql.
 - Choose query_name only from candidate_query_cards.
-- Read the selected tool's required_args and optional_args before planning.
+- Treat each candidate tool's title, description, input_schema, required_args,
+  optional_args, and annotations as the MCP server's instructions for when and
+  how to use that tool.
+- Select the best tool by comparing the user's request to the discovered MCP
+  tool metadata. Do not use keyword routing or hardcoded parameter patterns.
+- Read the selected tool's input_schema, required_args, and optional_args before planning.
 - Extract tool arguments from user_query first, then evidence_pack if the
   user_query clearly refers to values found there.
 - Put extracted parameters in arguments using exactly the names from the
@@ -135,19 +140,6 @@ def _required_args(card: dict[str, Any]) -> list[str]:
     return []
 
 
-def _extract_argument(user_query: str, arg_name: str) -> str | None:
-    if arg_name == "part_no":
-        match = re.search(r"\b[A-Z]\d{3}\b", user_query, flags=re.IGNORECASE)
-        return match.group(0).upper() if match else None
-    if arg_name == "project_id":
-        match = re.search(r"\bP\d{2}\b", user_query, flags=re.IGNORECASE)
-        return match.group(0).upper() if match else None
-    if arg_name == "vendor_name":
-        match = re.search(r"\b(?:Acme|Globex)\b", user_query, flags=re.IGNORECASE)
-        return match.group(0) if match else None
-    return None
-
-
 def _evidence_ids(evidence_pack: list[dict[str, Any]]) -> list[str]:
     ids: list[str] = []
     for item in evidence_pack:
@@ -163,28 +155,9 @@ def _stub_plan(
     evidence_pack: list[dict[str, Any]],
     candidate_query_cards: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    lowered = user_query.casefold()
+    _ = user_query
     evidence_ids = _evidence_ids(evidence_pack)
-    if any(token in lowered for token in ("流程", "process", "how to", "文件")):
-        return {
-            "decision": "answer_from_docs",
-            "query_name": None,
-            "arguments": {},
-            "missing_args": [],
-            "confidence": 0.72,
-            "reason": "The user is asking a documentation or process question.",
-            "required_evidence_ids": evidence_ids,
-        }
-
-    selected_card = next(
-        (
-            card
-            for card in candidate_query_cards
-            if "bom" in str(card.get("query_name", "")).casefold()
-            or "bom" in str(card.get("title", "")).casefold()
-        ),
-        candidate_query_cards[0] if candidate_query_cards else None,
-    )
+    selected_card = candidate_query_cards[0] if candidate_query_cards else None
     if selected_card is None:
         return {
             "decision": "answer_from_docs",
@@ -195,37 +168,18 @@ def _stub_plan(
             "reason": "No candidate query card was available.",
             "required_evidence_ids": evidence_ids,
         }
-
-    arguments: dict[str, Any] = {}
-    missing_args: list[str] = []
-    for arg_name in _required_args(selected_card):
-        value = _extract_argument(user_query, arg_name)
-        if value is None:
-            missing_args.append(arg_name)
-        else:
-            arguments[arg_name] = value
-
-    if missing_args:
-        return {
-            "decision": "ask_clarification",
-            "query_name": selected_card["query_name"],
-            "arguments": arguments,
-            "missing_args": missing_args,
-            "confidence": 0.68,
-            "reason": "A query template appears relevant, but required arguments are missing.",
-            "required_evidence_ids": evidence_ids,
-        }
-
     return {
-        "decision": "call_query_template",
+        "decision": "ask_clarification",
         "query_name": selected_card["query_name"],
-        "arguments": arguments,
-        "missing_args": [],
-        "confidence": 0.82,
-        "reason": "The question needs database-backed facts and all required arguments are present.",
+        "arguments": {},
+        "missing_args": _required_args(selected_card),
+        "confidence": 0.0,
+        "reason": (
+            "Test stub does not select tools or extract arguments. Use a fake "
+            "LLM payload for tests that exercise MCP tool planning."
+        ),
         "required_evidence_ids": evidence_ids,
     }
-
 
 def generate_query_plan(
     *,

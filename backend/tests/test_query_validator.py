@@ -189,3 +189,143 @@ def test_validate_query_plan_allows_mcp_sse_tool_without_handler_or_sql_template
     assert result.checks["sql_template_valid"] is True
     assert result.checks["handler_valid"] is True
     assert result.normalized_arguments == {"part_no": "A123"}
+
+
+def test_validate_query_plan_rejects_disabled_mcp_tool() -> None:
+    result = validate_query_plan(
+        query_plan={
+            "decision": "call_query_template",
+            "query_name": "query_mcp_status",
+            "arguments": {"part_no": "A123"},
+            "missing_args": [],
+            "confidence": 0.9,
+            "reason": "MCP tool can answer this.",
+            "required_evidence_ids": [],
+        },
+        candidate_query_cards=[
+            {
+                "query_name": "query_mcp_status",
+                "title": "MCP Status",
+                "transport": "mcp-sse",
+                "status": "disabled",
+                "required_args": {"part_no": {"type": "string"}},
+                "optional_args": {},
+            }
+        ],
+        sql_template_registry=SQL_TEMPLATE_REGISTRY,
+    )
+
+    assert result.ok is False
+    assert result.action == "reject"
+    assert result.checks["tool_enabled"] is False
+
+
+def test_validate_query_plan_rejects_unknown_argument_for_mcp_tool() -> None:
+    result = validate_query_plan(
+        query_plan={
+            "decision": "call_query_template",
+            "query_name": "query_mcp_status",
+            "arguments": {"part_no": "A123", "raw_status": "all"},
+            "missing_args": [],
+            "confidence": 0.9,
+            "reason": "MCP tool can answer this.",
+            "required_evidence_ids": [],
+        },
+        candidate_query_cards=[
+            {
+                "query_name": "query_mcp_status",
+                "title": "MCP Status",
+                "transport": "mcp-sse",
+                "required_args": {"part_no": {"type": "string"}},
+                "optional_args": {},
+            }
+        ],
+        sql_template_registry=SQL_TEMPLATE_REGISTRY,
+    )
+
+    assert result.ok is False
+    assert result.action == "reject"
+    assert result.error is not None
+    assert "unknown argument" in result.error
+
+
+def test_validate_query_plan_rejects_wrong_primitive_type_for_mcp_tool() -> None:
+    result = validate_query_plan(
+        query_plan={
+            "decision": "call_query_template",
+            "query_name": "query_mcp_status",
+            "arguments": {"part_no": 123},
+            "missing_args": [],
+            "confidence": 0.9,
+            "reason": "MCP tool can answer this.",
+            "required_evidence_ids": [],
+        },
+        candidate_query_cards=[
+            {
+                "query_name": "query_mcp_status",
+                "title": "MCP Status",
+                "transport": "mcp-sse",
+                "required_args": {"part_no": {"type": "string"}},
+                "optional_args": {},
+            }
+        ],
+        sql_template_registry=SQL_TEMPLATE_REGISTRY,
+    )
+
+    assert result.ok is False
+    assert result.action == "reject"
+    assert result.error is not None
+    assert "argument part_no must be string" in result.error
+
+
+def test_validate_query_plan_validates_nested_schema_and_enum_for_mcp_tool() -> None:
+    candidate_cards = [
+        {
+            "query_name": "query_mcp_status",
+            "title": "MCP Status",
+            "transport": "mcp-sse",
+            "required_args": {
+                "filters": {
+                    "type": "object",
+                    "required": ["region"],
+                    "properties": {
+                        "region": {"type": "string", "enum": ["tw", "us"]},
+                    },
+                }
+            },
+            "optional_args": {
+                "tags": {"type": "array", "items": {"type": "string"}},
+            },
+        }
+    ]
+
+    ok_result = validate_query_plan(
+        query_plan={
+            "decision": "call_query_template",
+            "query_name": "query_mcp_status",
+            "arguments": {"filters": {"region": "tw"}, "tags": ["ate"]},
+            "missing_args": [],
+            "confidence": 0.9,
+            "reason": "MCP tool can answer this.",
+            "required_evidence_ids": [],
+        },
+        candidate_query_cards=candidate_cards,
+        sql_template_registry=SQL_TEMPLATE_REGISTRY,
+    )
+    bad_result = validate_query_plan(
+        query_plan={
+            "decision": "call_query_template",
+            "query_name": "query_mcp_status",
+            "arguments": {"filters": {"region": "eu"}},
+            "missing_args": [],
+            "confidence": 0.9,
+            "reason": "MCP tool can answer this.",
+            "required_evidence_ids": [],
+        },
+        candidate_query_cards=candidate_cards,
+        sql_template_registry=SQL_TEMPLATE_REGISTRY,
+    )
+
+    assert ok_result.ok is True
+    assert bad_result.ok is False
+    assert bad_result.action == "reject"

@@ -4,8 +4,11 @@ from typing import Any
 
 import pytest
 
-from agents.query_planner import StubQueryPlannerLLMClient
-from services.query_pipeline import run_query_pipeline
+from services.query_pipeline import (
+    find_candidate_query_cards,
+    rank_candidate_query_cards,
+    run_query_pipeline,
+)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -66,10 +69,152 @@ def _run(**overrides: Any):
         "evidence_context": "BOM cost needs part_no.",
         "citations": [{"id": "doc-1", "text": "BOM cost background."}],
         "kb_ids": [1],
-        "planner_client": StubQueryPlannerLLMClient(),
+        "planner_client": FakePlannerClient(
+            {
+                "decision": "call_query_template",
+                "query_name": "query_bom_cost",
+                "arguments": {"part_no": "A123"},
+                "missing_args": [],
+                "confidence": 0.9,
+                "reason": "The discovered BOM cost tool matches the request.",
+                "required_evidence_ids": [],
+            }
+        ),
     }
     payload.update(overrides)
     return run_query_pipeline(**payload)
+
+
+def _tool_card(
+    name: str,
+    *,
+    title: str | None = None,
+    description: str = "",
+    required_args: dict[str, Any] | None = None,
+    status: str = "enabled",
+    do_not_use_when: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "query_name": name,
+        "mcp_tool_name": name,
+        "title": title or name.replace("_", " ").title(),
+        "description": description,
+        "input_schema": {
+            "type": "object",
+            "properties": required_args or {},
+            "required": list((required_args or {}).keys()),
+        },
+        "required_args": required_args or {},
+        "optional_args": {},
+        "do_not_use_when": do_not_use_when or [],
+        "status": status,
+        "transport": "mcp-sse",
+    }
+
+
+def _filler_cards(count: int) -> list[dict[str, Any]]:
+    return [
+        _tool_card(
+            f"query_filler_{index}",
+            title=f"Filler Tool {index}",
+            description=f"Generic unrelated tool number {index}.",
+        )
+        for index in range(count)
+    ]
+
+
+def test_find_candidate_query_cards_small_set_returns_all_enabled_tools() -> None:
+    cards = [
+        _tool_card("query_weather"),
+        _tool_card("query_disabled_weather", status="disabled"),
+        _tool_card("query_inventory"),
+    ]
+
+    result = find_candidate_query_cards(search_text="weather", query_cards=cards)
+
+    assert [card["query_name"] for card in result] == [
+        "query_weather",
+        "query_inventory",
+    ]
+
+
+def test_find_candidate_query_cards_large_set_returns_top_8() -> None:
+    cards = _filler_cards(25)
+    cards[18] = _tool_card(
+        "query_weather",
+        title="Current Weather",
+        description="Get current weather forecast by city and location.",
+        required_args={"location": {"type": "string", "description": "City location."}},
+    )
+
+    result = find_candidate_query_cards(
+        search_text="weather forecast for city location",
+        query_cards=cards,
+    )
+
+    assert len(result) == 8
+    assert result[0]["query_name"] == "query_weather"
+
+
+def test_find_candidate_query_cards_schema_arg_match_ranks_above_unrelated_tools() -> None:
+    cards = _filler_cards(21)
+    cards[7] = _tool_card(
+        "query_part_status",
+        title="Part Status",
+        description="Lookup operational state.",
+        required_args={
+            "part_no": {
+                "type": "string",
+                "description": "Part number or component identifier.",
+            }
+        },
+    )
+
+    result = find_candidate_query_cards(
+        search_text="component part number status",
+        query_cards=cards,
+    )
+
+    assert result[0]["query_name"] == "query_part_status"
+
+
+def test_find_candidate_query_cards_do_not_use_when_lowers_rank() -> None:
+    cards = _filler_cards(21)
+    cards[3] = _tool_card(
+        "query_process_data",
+        title="Process Data",
+        description="Returns process data metrics.",
+        do_not_use_when=["The user asks about process documentation."],
+    )
+    cards[9] = _tool_card(
+        "query_process_docs",
+        title="Process Documentation",
+        description="Answers process documentation questions.",
+    )
+
+    result = rank_candidate_query_cards(
+        search_text="process documentation",
+        query_cards=cards,
+    )
+    scores = {
+        item["query_name"]: item["score"]
+        for item in result.tool_ranker_scores
+    }
+
+    assert scores["query_process_docs"] > scores["query_process_data"]
+
+
+def test_find_candidate_query_cards_uses_stable_order_for_equal_scores() -> None:
+    cards = _filler_cards(24)
+
+    result = find_candidate_query_cards(
+        search_text="no matching vocabulary",
+        query_cards=cards,
+    )
+
+    assert [card["query_name"] for card in result] == [
+        f"query_filler_{index}" for index in range(8)
+    ]
 
 
 def test_query_pipeline_executes_bom_cost_and_context_contains_unit_price() -> None:
@@ -249,3 +394,42 @@ def test_query_pipeline_prompt_receives_enabled_tool_cards() -> None:
     assert result.decision == "answer_from_docs"
     assert planner.last_user_prompt is not None
     assert "query_llm_info" in planner.last_user_prompt
+
+
+def test_query_pipeline_prompt_receives_ranked_candidates_not_full_large_tool_list() -> None:
+    planner = FakePlannerClient(
+        {
+            "decision": "answer_from_docs",
+            "query_name": None,
+            "arguments": {},
+            "missing_args": [],
+            "confidence": 0.8,
+            "reason": "Documentation question.",
+            "required_evidence_ids": [],
+        }
+    )
+    query_cards = _filler_cards(25)
+    query_cards[20] = _tool_card(
+        "query_weather",
+        title="Current Weather",
+        description="Get current weather forecast by city and location.",
+        required_args={"location": {"type": "string", "description": "City location."}},
+    )
+
+    result = _run(
+        user_message="What is the weather forecast for Taipei city?",
+        rag_query="weather forecast Taipei city location",
+        query_cards=query_cards,
+        planner_client=planner,
+    )
+
+    assert result.decision == "answer_from_docs"
+    assert result.debug["tool_ranker_applied"] is True
+    assert result.debug["all_candidate_query_names"] == [
+        card["query_name"] for card in query_cards
+    ]
+    assert len(result.debug["ranked_candidate_query_names"]) == 8
+    assert result.debug["ranked_candidate_query_names"][0] == "query_weather"
+    assert planner.last_user_prompt is not None
+    assert "query_weather" in planner.last_user_prompt
+    assert "query_filler_24" not in planner.last_user_prompt

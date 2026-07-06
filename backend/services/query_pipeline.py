@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
+from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -80,6 +82,19 @@ DEFAULT_QUERY_CARDS: list[dict[str, Any]] = [
 ]
 
 
+TOOL_RANKER_FULL_PASS_THRESHOLD = 20
+TOOL_RANKER_LIMIT = 8
+
+
+@dataclass(frozen=True)
+class ToolRankerResult:
+    cards: list[dict[str, Any]]
+    all_candidate_query_names: list[str]
+    ranked_candidate_query_names: list[str]
+    tool_ranker_applied: bool
+    tool_ranker_scores: list[dict[str, Any]]
+
+
 def _json_from_text(text: str) -> dict[str, Any]:
     stripped = text.strip()
     if stripped.startswith("```"):
@@ -126,12 +141,143 @@ class McpQueryExecutor:
         )
 
 
+def _enabled_query_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        card
+        for card in cards
+        if card.get("query_name")
+        and str(card.get("status") or "enabled").casefold() != "disabled"
+    ]
+
+
+def _tokens(text: str) -> Counter[str]:
+    normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
+    normalized = normalized.replace("_", " ").replace("-", " ")
+    return Counter(re.findall(r"[a-zA-Z0-9]+", normalized.casefold()))
+
+
+def _metadata_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(
+            f"{key} {_metadata_text(item)}" for key, item in value.items()
+        )
+    if isinstance(value, list | tuple | set):
+        return " ".join(_metadata_text(item) for item in value)
+    return str(value)
+
+
+def _tool_metadata_text(card: dict[str, Any]) -> str:
+    fields = [
+        card.get("query_name"),
+        card.get("mcp_tool_name"),
+        card.get("title"),
+        card.get("description"),
+        card.get("when_to_use"),
+        card.get("do_not_use_when"),
+        card.get("input_schema"),
+        card.get("required_args"),
+        card.get("optional_args"),
+        card.get("annotations"),
+    ]
+    return " ".join(_metadata_text(field) for field in fields)
+
+
+def _schema_description_text(value: Any) -> str:
+    if isinstance(value, dict):
+        parts: list[str] = []
+        description = value.get("description")
+        if description:
+            parts.append(str(description))
+        for child in value.values():
+            parts.append(_schema_description_text(child))
+        return " ".join(parts)
+    if isinstance(value, list):
+        return " ".join(_schema_description_text(item) for item in value)
+    return ""
+
+
+def _token_overlap_score(query: Counter[str], text: Any) -> float:
+    if not query:
+        return 0.0
+    target = _tokens(_metadata_text(text))
+    return float(sum(min(query[token], target[token]) for token in query))
+
+
+def _score_query_card(*, search_text: str, card: dict[str, Any]) -> float:
+    query = _tokens(search_text)
+    if not query:
+        return 0.0
+
+    score = _token_overlap_score(query, _tool_metadata_text(card))
+    score += 3.0 * _token_overlap_score(
+        query,
+        [card.get("query_name"), card.get("mcp_tool_name"), card.get("title")],
+    )
+    score += 2.0 * _token_overlap_score(
+        query,
+        list((card.get("required_args") or {}).keys())
+        if isinstance(card.get("required_args"), dict)
+        else card.get("required_args"),
+    )
+    score += 1.5 * _token_overlap_score(
+        query,
+        _schema_description_text(card.get("input_schema"))
+        or _schema_description_text(card.get("required_args"))
+        or _schema_description_text(card.get("optional_args")),
+    )
+    score -= 4.0 * _token_overlap_score(query, card.get("do_not_use_when"))
+    return score
+
+
+def rank_candidate_query_cards(
+    *, search_text: str, query_cards: list[dict[str, Any]] | None = None
+) -> ToolRankerResult:
+    cards = DEFAULT_QUERY_CARDS if query_cards is None else query_cards
+    enabled_cards = _enabled_query_cards(cards)
+    all_names = [str(card.get("query_name")) for card in enabled_cards]
+    scored_cards = [
+        (index, _score_query_card(search_text=search_text, card=card), card)
+        for index, card in enumerate(enabled_cards)
+    ]
+
+    if len(enabled_cards) <= TOOL_RANKER_FULL_PASS_THRESHOLD:
+        return ToolRankerResult(
+            cards=enabled_cards,
+            all_candidate_query_names=all_names,
+            ranked_candidate_query_names=all_names,
+            tool_ranker_applied=False,
+            tool_ranker_scores=[
+                {"query_name": card.get("query_name"), "score": score}
+                for _, score, card in scored_cards
+            ],
+        )
+
+    ranked = sorted(scored_cards, key=lambda item: (-item[1], item[0]))
+    selected = ranked[:TOOL_RANKER_LIMIT]
+    return ToolRankerResult(
+        cards=[card for _, _, card in selected],
+        all_candidate_query_names=all_names,
+        ranked_candidate_query_names=[str(card.get("query_name")) for _, _, card in selected],
+        tool_ranker_applied=True,
+        tool_ranker_scores=[
+            {"query_name": card.get("query_name"), "score": score}
+            for _, score, card in ranked
+        ],
+    )
+
+
 def find_candidate_query_cards(
     *, search_text: str, query_cards: list[dict[str, Any]] | None = None
 ) -> list[dict[str, Any]]:
-    _ = search_text
-    cards = DEFAULT_QUERY_CARDS if query_cards is None else query_cards
-    return [card for card in cards if card.get("query_name")]
+    return rank_candidate_query_cards(
+        search_text=search_text,
+        query_cards=query_cards,
+    ).cards
+
 
 
 def _evidence_pack(
@@ -203,10 +349,11 @@ def run_query_pipeline(
     executor: QueryExecutor | None = None,
 ) -> QueryPipelineResult:
     search_text = rag_query or user_message
-    candidate_query_cards = find_candidate_query_cards(
+    ranker_result = rank_candidate_query_cards(
         search_text=search_text,
         query_cards=query_cards,
     )
+    candidate_query_cards = ranker_result.cards
     debug: dict[str, Any] = {
         "user_id": user_id,
         "kb_ids": kb_ids,
@@ -214,6 +361,10 @@ def run_query_pipeline(
         "candidate_query_names": [
             card.get("query_name") for card in candidate_query_cards
         ],
+        "all_candidate_query_names": ranker_result.all_candidate_query_names,
+        "ranked_candidate_query_names": ranker_result.ranked_candidate_query_names,
+        "tool_ranker_applied": ranker_result.tool_ranker_applied,
+        "tool_ranker_scores": ranker_result.tool_ranker_scores,
     }
     if not candidate_query_cards:
         return QueryPipelineResult(

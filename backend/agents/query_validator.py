@@ -85,16 +85,32 @@ def _arg_specs(card: dict[str, Any] | None) -> dict[str, Any]:
 
 def _arg_type(spec: Any) -> str:
     if isinstance(spec, dict):
-        return str(spec.get("type") or "any")
+        raw_type = spec.get("type")
+        if isinstance(raw_type, list):
+            return " | ".join(str(item) for item in raw_type)
+        if raw_type is not None:
+            return str(raw_type)
+        if "properties" in spec:
+            return "object"
+        if "items" in spec:
+            return "array"
+        if "enum" in spec:
+            return "enum"
+        return "any"
     if hasattr(spec, "type"):
         return str(spec.type)
     return str(spec or "any")
 
 
-def _matches_type(value: Any, expected: str) -> bool:
-    normalized = expected.strip().casefold()
+def _matches_type(value: Any, expected: Any) -> bool:
+    if isinstance(expected, list):
+        return any(_matches_type(value, item) for item in expected)
+
+    normalized = str(expected).strip().casefold()
     if normalized in {"any", "unknown"}:
         return True
+    if normalized in {"null", "none"}:
+        return value is None
     if normalized in {"str", "string", "text"}:
         return isinstance(value, str)
     if normalized in {"int", "integer"}:
@@ -110,6 +126,59 @@ def _matches_type(value: Any, expected: str) -> bool:
     if normalized.endswith(" | null") or normalized.endswith(" or null"):
         base = normalized.replace(" | null", "").replace(" or null", "")
         return value is None or _matches_type(value, base)
+    return True
+
+
+def _matches_schema(value: Any, spec: Any) -> bool:
+    if not isinstance(spec, dict):
+        return _matches_type(value, spec)
+
+    if "enum" in spec and isinstance(spec["enum"], list):
+        return value in spec["enum"]
+
+    for union_key in ("anyOf", "oneOf"):
+        options = spec.get(union_key)
+        if isinstance(options, list):
+            return any(_matches_schema(value, option) for option in options)
+
+    expected_type = spec.get("type")
+    if not _matches_type(value, expected_type or _arg_type(spec)):
+        return False
+
+    raw_type = spec.get("type")
+    type_names = (
+        {str(item).casefold() for item in raw_type}
+        if isinstance(raw_type, list)
+        else {str(raw_type or _arg_type(spec)).casefold()}
+    )
+
+    if (
+        type_names & {"object", "dict", "json"}
+        or ("properties" in spec and not type_names - {"any", "unknown"})
+    ) and isinstance(value, dict):
+        properties = spec.get("properties")
+        if isinstance(properties, dict):
+            required = {str(item) for item in spec.get("required", [])}
+            for name in required:
+                if name not in value or value[name] in (None, ""):
+                    return False
+            for name, item in value.items():
+                child_spec = properties.get(name)
+                if child_spec is not None and not _matches_schema(item, child_spec):
+                    return False
+            if spec.get("additionalProperties") is False:
+                return all(name in properties for name in value)
+        return True
+
+    if (
+        type_names & {"array", "list"}
+        or ("items" in spec and not type_names - {"any", "unknown"})
+    ) and isinstance(value, list):
+        item_spec = spec.get("items")
+        if item_spec is None:
+            return True
+        return all(_matches_schema(item, item_spec) for item in value)
+
     return True
 
 
@@ -137,7 +206,7 @@ def _validate_arguments(
             normalized[name] = value
             continue
         expected = _arg_type(specs[name])
-        if not _matches_type(value, expected):
+        if not _matches_schema(value, specs[name]):
             return False, {}, f"argument {name} must be {expected}"
         normalized[name] = value
 
@@ -172,6 +241,7 @@ def validate_query_plan(
     handler_key = str((candidate_card or {}).get("handler_key") or "")
     transport = str((candidate_card or {}).get("transport") or "in-process")
     is_remote_tool = transport in REMOTE_TOOL_TRANSPORTS
+    tool_enabled = str((candidate_card or {}).get("status") or "enabled") == "enabled"
     requires_sql_template = handler_key == "query_bom_cost" or (
         not handler_key and not is_remote_tool
     )
@@ -213,6 +283,7 @@ def validate_query_plan(
         "pydantic_schema_valid": schema_valid,
         "confidence_passed": confidence_passed,
         "raw_sql_absent": raw_sql_absent,
+        "tool_enabled": tool_enabled,
         "sql_template_valid": sql_template_valid,
         "handler_valid": handler_valid,
     }
