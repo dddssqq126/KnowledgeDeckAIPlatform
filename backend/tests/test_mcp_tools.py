@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
+import json
 import pytest
 
 from app.features.mcp_tools.services import tool_service
@@ -207,9 +209,7 @@ def test_execute_registered_tool_calls_selected_mcp_tool() -> None:
         client_factory=lambda: fake,
     )
 
-    assert fake.calls == [
-        {"name": "query_bom_cost", "arguments": {"part_no": "A123"}}
-    ]
+    assert fake.calls == [{"name": "query_bom_cost", "arguments": {"part_no": "A123"}}]
     assert result["status"] == "ok"
     assert result["row_count"] == 1
     assert result["columns"] == ["part_no", "unit_cost"]
@@ -309,3 +309,48 @@ def test_execute_reports_mcp_client_error() -> None:
 
     assert result["status"] == "error"
     assert result["error"] == "mcp_error: McpToolError"
+
+
+def test_mcp_http_tool_client_posts_to_fixed_tool_endpoints() -> None:
+    requests: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(
+            {
+                "url": str(request.url),
+                "session": request.headers.get("Mcp-Session-Id"),
+                "body": json.loads(request.content.decode()),
+            }
+        )
+        if str(request.url).endswith("/tools/list"):
+            return httpx.Response(200, json={"tools": [{"name": "query_status"}]})
+        return httpx.Response(200, json={"structuredContent": {"status": "ok"}})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with tool_service.McpHttpToolClient(
+        sse_url="http://10.150.186.9/sse",
+        session_id="37880f8a4f",
+        timeout_sec=30,
+        client=client,
+    ) as mcp_client:
+        assert mcp_client.list_tools() == [{"name": "query_status"}]
+        assert mcp_client.call_tool(
+            name="query_status", arguments={"query": "keep existing shape"}
+        ) == {"structuredContent": {"status": "ok"}}
+
+    assert requests == [
+        {
+            "url": "http://10.150.186.9/sse/tools/list",
+            "session": "37880f8a4f",
+            "body": {"session_id": "37880f8a4f"},
+        },
+        {
+            "url": "http://10.150.186.9/sse/tools/call",
+            "session": "37880f8a4f",
+            "body": {
+                "name": "query_status",
+                "arguments": {"query": "keep existing shape"},
+                "session_id": "37880f8a4f",
+            },
+        },
+    ]
