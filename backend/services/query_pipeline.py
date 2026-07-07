@@ -112,6 +112,97 @@ def _json_from_text(text: str) -> dict[str, Any]:
     return parsed
 
 
+def _sql_template_from_query_card(card: dict[str, Any]) -> SqlTemplate | None:
+    query_name = str(card.get("query_name") or "")
+    sql = card.get("sql")
+    template_payload = card.get("sql_template")
+    if isinstance(template_payload, dict):
+        sql = template_payload.get("sql", sql)
+    else:
+        template_payload = {}
+
+    if not query_name or not isinstance(sql, str) or not sql.strip():
+        return None
+
+    arg_names: list[str] = []
+    required_args = card.get("required_args") or {}
+    if isinstance(required_args, dict):
+        arg_names.extend(str(name) for name in required_args)
+    optional_args = card.get("optional_args") or {}
+    if isinstance(optional_args, dict):
+        arg_names.extend(str(name) for name in optional_args)
+    raw_allowed_params = (
+        template_payload.get("allowed_params")
+        or template_payload.get("allowedParams")
+        or card.get("allowed_params")
+        or card.get("allowedParams")
+        or arg_names
+    )
+    if isinstance(raw_allowed_params, str):
+        allowed_params = [raw_allowed_params]
+    else:
+        allowed_params = list(raw_allowed_params)
+    return SqlTemplate(
+        template_id=str(
+            template_payload.get("template_id")
+            or template_payload.get("templateId")
+            or card.get("template_id")
+            or f"{query_name}:query-card"
+        ),
+        query_name=query_name,
+        version=str(
+            template_payload.get("version")
+            or card.get("version")
+            or str(card.get("template_id") or "query-card").rsplit(":", 1)[-1]
+        ),
+        sql=sql,
+        allowed_params=tuple(str(param) for param in allowed_params),
+        row_limit=int(
+            template_payload.get("row_limit") or card.get("row_limit") or 500
+        ),
+        timeout_sec=int(
+            template_payload.get("timeout_sec") or card.get("timeout_sec") or 10
+        ),
+    )
+
+
+def _sql_template_registry_from_query_cards(
+    candidate_query_cards: list[dict[str, Any]],
+) -> dict[str, SqlTemplate]:
+    registry: dict[str, SqlTemplate] = {}
+    for card in candidate_query_cards:
+        template = _sql_template_from_query_card(card)
+        if template is not None:
+            registry[template.query_name] = template
+    return registry
+
+
+def _validation_registry(
+    *,
+    candidate_query_cards: list[dict[str, Any]],
+    query_cards: list[dict[str, Any]] | None,
+    sql_template_registry: dict[str, SqlTemplate] | None,
+) -> dict[str, SqlTemplate]:
+    if sql_template_registry is not None:
+        return sql_template_registry
+    query_card_registry = _sql_template_registry_from_query_cards(candidate_query_cards)
+    if query_card_registry or query_cards is not None:
+        return query_card_registry
+    return SQL_TEMPLATE_REGISTRY
+
+
+def _validation_schema_map(
+    *,
+    query_cards: list[dict[str, Any]] | None,
+    query_arg_schema_map: dict[str, type[BaseModel]] | None,
+) -> dict[str, type[BaseModel]] | None:
+    if query_arg_schema_map is not None:
+        return query_arg_schema_map
+    if query_cards is not None:
+        return None
+    return QUERY_ARG_SCHEMA_MAP
+
+
 class ConfiguredQueryPlannerLLMClient:
     def generate_query_plan(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         settings = get_settings()
@@ -389,8 +480,15 @@ def run_query_pipeline(
             debug={**debug, "planner_error": str(exc)},
         )
     plan_dict = plan.model_dump()
-    registry = sql_template_registry or SQL_TEMPLATE_REGISTRY
-    schema_map = query_arg_schema_map or QUERY_ARG_SCHEMA_MAP
+    registry = _validation_registry(
+        candidate_query_cards=candidate_query_cards,
+        query_cards=query_cards,
+        sql_template_registry=sql_template_registry,
+    )
+    schema_map = _validation_schema_map(
+        query_cards=query_cards,
+        query_arg_schema_map=query_arg_schema_map,
+    )
     try:
         validation = validate_query_plan(
             query_plan=plan,
