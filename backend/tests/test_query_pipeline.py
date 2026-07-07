@@ -474,7 +474,13 @@ def test_query_pipeline_validates_query_card_owned_template_for_custom_bom_tool(
         }
     ]
 
-    result = _run(query_cards=query_cards, planner_client=planner, executor=executor)
+    result = _run(
+        query_cards=query_cards,
+        planner_client=planner,
+        executor=executor,
+        sql_template_registry={},
+        query_arg_schema_map={},
+    )
 
     assert result.decision == "call_query_template"
     assert result.query_name == "query_bom_cost"
