@@ -64,6 +64,58 @@ def _optional_arg_names(card: dict[str, Any] | None) -> list[str]:
     return []
 
 
+def _sql_template_from_query_card(card: dict[str, Any] | None) -> SqlTemplate | None:
+    if card is None:
+        return None
+
+    query_name = str(card.get("query_name") or "")
+    sql = card.get("sql")
+    template_payload = card.get("sql_template")
+    if isinstance(template_payload, dict):
+        sql = template_payload.get("sql", sql)
+    else:
+        template_payload = {}
+
+    if not query_name or not isinstance(sql, str) or not sql.strip():
+        return None
+
+    arg_names = [*_required_arg_names(card), *_optional_arg_names(card)]
+    raw_allowed_params = (
+        template_payload.get("allowed_params")
+        or template_payload.get("allowedParams")
+        or card.get("allowed_params")
+        or card.get("allowedParams")
+        or arg_names
+    )
+    allowed_params = (
+        [raw_allowed_params]
+        if isinstance(raw_allowed_params, str)
+        else list(raw_allowed_params)
+    )
+    return SqlTemplate(
+        template_id=str(
+            template_payload.get("template_id")
+            or template_payload.get("templateId")
+            or card.get("template_id")
+            or f"{query_name}:query-card"
+        ),
+        query_name=query_name,
+        version=str(
+            template_payload.get("version")
+            or card.get("version")
+            or str(card.get("template_id") or "query-card").rsplit(":", 1)[-1]
+        ),
+        sql=sql,
+        allowed_params=tuple(str(param) for param in allowed_params),
+        row_limit=int(
+            template_payload.get("row_limit") or card.get("row_limit") or 500
+        ),
+        timeout_sec=int(
+            template_payload.get("timeout_sec") or card.get("timeout_sec") or 10
+        ),
+    )
+
+
 def _contains_raw_sql(value: Any) -> bool:
     if isinstance(value, dict):
         return any(k == "raw_sql" or _contains_raw_sql(v) for k, v in value.items())
@@ -227,7 +279,7 @@ def validate_query_plan(
     *,
     query_plan: QueryPlan | dict[str, Any],
     candidate_query_cards: list[dict[str, Any]],
-    sql_template_registry: dict[str, SqlTemplate],
+    sql_template_registry: dict[str, SqlTemplate] | None = None,
     query_arg_schema_map: dict[str, type[BaseModel]] | None = None,
 ) -> QueryValidationResult:
     plan = (
@@ -237,7 +289,7 @@ def validate_query_plan(
     )
     query_name = plan.query_name
     candidate_card = _candidate_card(query_name, candidate_query_cards)
-    template = sql_template_registry.get(query_name or "")
+    template = _sql_template_from_query_card(candidate_card)
     handler_key = str((candidate_card or {}).get("handler_key") or "")
     transport = str((candidate_card or {}).get("transport") or "in-process")
     is_remote_tool = transport in REMOTE_TOOL_TRANSPORTS
@@ -246,7 +298,7 @@ def validate_query_plan(
         not handler_key and not is_remote_tool
     )
 
-    query_exists_in_registry = (query_name in sql_template_registry) if requires_sql_template else True
+    query_exists_in_registry = template is not None if requires_sql_template else True
     query_exists_in_candidate_cards = query_name in _candidate_query_names(
         candidate_query_cards
     )

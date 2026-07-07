@@ -16,7 +16,7 @@ from agents.query_planner import QueryPlannerLLMClient, generate_query_plan
 from agents.query_validator import validate_query_plan
 from agents.result_verifier import verify_query_result
 from agents.synthesizer import synthesize_answer
-from sql_templates.registry import SQL_TEMPLATE_REGISTRY, SqlTemplate
+from sql_templates.registry import SqlTemplate
 
 
 PipelineDecision = Literal[
@@ -45,15 +45,6 @@ class QueryExecutor(Protocol):
         """Execute a fixed query template. Implementations must not accept raw SQL."""
 
 
-class BomCostArgs(BaseModel):
-    part_no: str
-
-
-QUERY_ARG_SCHEMA_MAP: dict[str, type[BaseModel]] = {
-    "query_bom_cost": BomCostArgs,
-}
-
-
 DEFAULT_QUERY_CARDS: list[dict[str, Any]] = [
     {
         "query_name": "query_bom_cost",
@@ -78,6 +69,18 @@ DEFAULT_QUERY_CARDS: list[dict[str, Any]] = [
         "transport": "in-process",
         "handler_key": "query_bom_cost",
         "template_id": "query_bom_cost:v1",
+        "sql": """
+SELECT
+    b.part_no,
+    b.component_part_no,
+    b.quantity,
+    c.unit_cost,
+    b.quantity * c.unit_cost AS extended_cost
+FROM bom_items b
+JOIN component_costs c ON c.part_no = b.component_part_no
+WHERE b.part_no = :part_no
+ORDER BY b.component_part_no
+""",
     }
 ]
 
@@ -389,14 +392,11 @@ def run_query_pipeline(
             debug={**debug, "planner_error": str(exc)},
         )
     plan_dict = plan.model_dump()
-    registry = sql_template_registry or SQL_TEMPLATE_REGISTRY
-    schema_map = query_arg_schema_map or QUERY_ARG_SCHEMA_MAP
+    del sql_template_registry, query_arg_schema_map
     try:
         validation = validate_query_plan(
             query_plan=plan,
             candidate_query_cards=candidate_query_cards,
-            sql_template_registry=registry,
-            query_arg_schema_map=schema_map,
         )
     except ValueError as exc:
         return QueryPipelineResult(

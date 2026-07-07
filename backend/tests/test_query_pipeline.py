@@ -433,3 +433,61 @@ def test_query_pipeline_prompt_receives_ranked_candidates_not_full_large_tool_li
     assert planner.last_user_prompt is not None
     assert "query_weather" in planner.last_user_prompt
     assert "query_filler_24" not in planner.last_user_prompt
+
+
+def test_query_pipeline_validates_query_card_owned_template_for_custom_bom_tool() -> None:
+    executor = FakeExecutor(rows=[{"part_no": "A123", "project_id": "P01"}])
+    planner = FakePlannerClient(
+        {
+            "decision": "call_query_template",
+            "query_name": "query_bom_cost",
+            "arguments": {"part_no": "A123", "project_id": "P01"},
+            "missing_args": [],
+            "confidence": 0.9,
+            "reason": "The query card requires both part and project.",
+            "required_evidence_ids": [],
+        }
+    )
+    query_cards = [
+        {
+            "query_name": "query_bom_cost",
+            "title": "Project BOM Cost",
+            "description": "Returns project-scoped BOM costs.",
+            "sql_type": "select",
+            "when_to_use": ["User asks for BOM cost within a project."],
+            "do_not_use_when": [],
+            "required_args": {
+                "part_no": {"type": "string"},
+                "project_id": {"type": "string"},
+            },
+            "optional_args": {},
+            "output_schema": {"part_no": "string", "project_id": "string"},
+            "empty_result_policy": {"answer": "No rows."},
+            "row_limit": 100,
+            "transport": "in-process",
+            "handler_key": "query_bom_cost",
+            "template_id": "query_bom_cost:project-v1",
+            "sql": (
+                "SELECT part_no, project_id FROM bom_items "
+                "WHERE part_no = :part_no AND project_id = :project_id"
+            ),
+        }
+    ]
+
+    result = _run(
+        query_cards=query_cards,
+        planner_client=planner,
+        executor=executor,
+        sql_template_registry={},
+        query_arg_schema_map={},
+    )
+
+    assert result.decision == "call_query_template"
+    assert result.query_name == "query_bom_cost"
+    assert result.debug["validation"]["checks"]["sql_template_valid"] is True
+    assert executor.calls == [
+        {
+            "query_name": "query_bom_cost",
+            "arguments": {"part_no": "A123", "project_id": "P01"},
+        }
+    ]

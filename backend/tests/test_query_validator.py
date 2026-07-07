@@ -38,6 +38,11 @@ def _candidate_query_cards() -> list[dict[str, Any]]:
                 "part_no": {"type": "string"},
                 "project_id": {"type": "string"},
             },
+            "template_id": "query_bom_cost:project-v1",
+            "sql": (
+                "SELECT part_no, project_id FROM bom_items "
+                "WHERE part_no = :part_no AND project_id = :project_id"
+            ),
         }
     ]
 
