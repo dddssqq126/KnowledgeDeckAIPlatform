@@ -13,6 +13,7 @@ export type Citation = {
   vendor?: string;
   platform?: string;
   knowledge_type?: string;
+  project_id?: string | null;
 };
 
 export type ChatSession = {

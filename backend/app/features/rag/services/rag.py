@@ -57,8 +57,15 @@ class RagDiagnostics:
     retried: bool = False
     retry_query: str | None = None
     retry_reason: str = ""
+    project_fallback: bool = False
 
     def retrieval_note(self) -> str | None:
+        if self.project_fallback:
+            return (
+                "No project-scoped documents matched, so retrieval was broadened "
+                "to other permitted documents. Clearly distinguish project-specific "
+                "facts from general information."
+            )
         if not self.deep_mode or self.coverage_status not in {"partial", "miss"}:
             return None
         return (
@@ -133,6 +140,7 @@ def _rerank_passage(hit: dict[str, Any]) -> str:
         f"platform: {payload.get('platform') or 'unknown'}",
         f"knowledge_type: {payload.get('knowledge_type') or 'unknown'}",
         f"doc_type: {payload.get('doc_type') or 'unknown'}",
+        f"project_id: {payload.get('project_id') or 'unknown'}",
     ]
     if topics:
         metadata_parts.append("topics: " + ", ".join(topics))
@@ -218,6 +226,7 @@ def _format_context(hits: list[dict[str, Any]]) -> str:
             f"knowledge_type={payload.get('knowledge_type') or 'unknown'} "
             f"doc_type={payload.get('doc_type') or 'unknown'} "
             f"topic={topic_text}"
+            f" project_id={payload.get('project_id') or 'unknown'}"
         )
         out.append(f"[{i}] {metadata}\n{payload['text']}")
     return "\n\n".join(out)
@@ -240,6 +249,7 @@ def _citations_from_hits(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "vendor": hit["payload"].get("vendor") or "unknown",
                 "platform": hit["payload"].get("platform") or "unknown",
                 "knowledge_type": hit["payload"].get("knowledge_type") or "unknown",
+                "project_id": hit["payload"].get("project_id"),
             }
         )
     return citations
@@ -277,6 +287,7 @@ async def _search_candidates(
     kb_ids: list[int] | None,
     query: str,
     profile: dict[str, int],
+    project_id: str | None = None,
 ) -> list[dict[str, Any]]:
     dense_vec, sparse_vec = await asyncio.gather(
         ingestion.embed_query(query),
@@ -289,6 +300,7 @@ async def _search_candidates(
         kb_ids=kb_ids,
         top_k=profile["candidate_k"],
         prefetch_limit=profile["prefetch_limit"],
+        project_id=project_id,
     )
 
 
@@ -331,6 +343,7 @@ async def _retrieve_pass(
     query: str,
     query_tags: Any | None,
     profile: dict[str, int],
+    project_id: str | None = None,
 ) -> _RetrievalPass:
     s = get_settings()
     candidates = await _search_candidates(
@@ -338,6 +351,7 @@ async def _retrieve_pass(
         kb_ids=kb_ids,
         query=query,
         profile=profile,
+        project_id=project_id,
     )
     if not candidates:
         return _result_from_final_hits(query=query, candidates=[], final_hits=[])
@@ -484,6 +498,8 @@ async def retrieve_context(
     query: str,
     query_tags: Any | None = None,
     deep_mode: bool = False,
+    project_id: str | None = None,
+    allow_project_fallback: bool = True,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Hybrid dense+sparse search → cross-encoder rerank → top-K context.
 
@@ -506,7 +522,20 @@ async def retrieve_context(
         kb_ids=kb_ids,
         top_k=profile["candidate_k"],
         prefetch_limit=profile["prefetch_limit"],
+        project_id=project_id,
     )
+    used_fallback = False
+    if not dense_hits and project_id and allow_project_fallback:
+        dense_hits = await qdrant_store.hybrid_search(
+            dense_vector=dense_vec,
+            sparse_vector=sparse_vec,
+            user_id=user_id,
+            kb_ids=kb_ids,
+            top_k=profile["candidate_k"],
+            prefetch_limit=profile["prefetch_limit"],
+            project_id=None,
+        )
+        used_fallback = bool(dense_hits)
     if not dense_hits:
         return "", []
 
@@ -531,6 +560,11 @@ async def retrieve_context(
         return "", []
 
     context = _format_context(final_hits)
+    if used_fallback:
+        context = (
+            "[Project-scoped retrieval returned no results; using broader "
+            "permitted sources.]\n\n" + context
+        )
     seen: set[int] = set()
     citations: list[dict[str, Any]] = []
     for hit in final_hits:
@@ -547,6 +581,7 @@ async def retrieve_context(
                 "vendor": hit["payload"].get("vendor") or "unknown",
                 "platform": hit["payload"].get("platform") or "unknown",
                 "knowledge_type": hit["payload"].get("knowledge_type") or "unknown",
+                "project_id": hit["payload"].get("project_id"),
             }
         )
     return context, citations
@@ -560,6 +595,8 @@ async def retrieve_context_checked(
     user_message: str,
     query_tags: Any | None = None,
     deep_mode: bool = False,
+    project_id: str | None = None,
+    allow_project_fallback: bool = True,
 ) -> RagContextResult:
     """Chat-focused retrieval with optional deep coverage critique.
 
@@ -575,13 +612,27 @@ async def retrieve_context_checked(
         query=query,
         query_tags=query_tags,
         profile=first_profile,
+        project_id=project_id,
     )
+    project_fallback = False
+    if not first.context and project_id and allow_project_fallback:
+        first = await _retrieve_pass(
+            user_id=user_id,
+            kb_ids=kb_ids,
+            query=query,
+            query_tags=query_tags,
+            profile=first_profile,
+            project_id=None,
+        )
+        project_fallback = bool(first.context)
 
     if not deep_mode:
         return RagContextResult(
             context=first.context,
             citations=first.citations,
-            diagnostics=RagDiagnostics(deep_mode=False),
+            diagnostics=RagDiagnostics(
+                deep_mode=False, project_fallback=project_fallback
+            ),
         )
 
     first_judgment = await _judge_coverage(
@@ -593,13 +644,14 @@ async def retrieve_context_checked(
         return RagContextResult(
             context=first.context,
             citations=first.citations,
-            diagnostics=RagDiagnostics(deep_mode=True),
+            diagnostics=RagDiagnostics(deep_mode=True, project_fallback=project_fallback),
         )
 
     diagnostics = RagDiagnostics(
         deep_mode=True,
         coverage_status=first_judgment.status,
         coverage_reason=first_judgment.reason,
+        project_fallback=project_fallback,
     )
     if (
         not first_judgment.needs_retry()
@@ -618,6 +670,7 @@ async def retrieve_context_checked(
             kb_ids=kb_ids,
             query=retry_query,
             profile=_retrieval_profile(deep_mode=False),
+            project_id=None if project_fallback else project_id,
         )
         combined = await _retrieve_combined_pass(
             query=query,
@@ -639,6 +692,7 @@ async def retrieve_context_checked(
                 retried=True,
                 retry_query=retry_query,
                 retry_reason="retry_failed",
+                project_fallback=project_fallback,
             ),
         )
 
@@ -664,5 +718,6 @@ async def retrieve_context_checked(
             retried=True,
             retry_query=retry_query,
             retry_reason=first_judgment.reason,
+            project_fallback=project_fallback,
         ),
     )

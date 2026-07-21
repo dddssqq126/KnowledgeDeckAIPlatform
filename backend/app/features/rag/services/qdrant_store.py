@@ -93,6 +93,8 @@ async def ensure_collection() -> None:
             "vendor",
             "platform",
             "knowledge_type",
+            "project_id",
+            "model_codes",
         ):
             client.create_payload_index(
                 collection_name=s.qdrant_collection,
@@ -135,6 +137,8 @@ def _point_struct(
     dense: list[float],
     sparse: SparseVec,
     tags: DocTags,
+    project_id: str | None = None,
+    model_codes: list[str] | None = None,
 ) -> qm.PointStruct:
     return qm.PointStruct(
         id=str(uuid.uuid4()),
@@ -157,6 +161,8 @@ def _point_struct(
             "vendor": tags.vendor,
             "platform": tags.platform,
             "knowledge_type": tags.knowledge_type,
+            "project_id": project_id,
+            "model_codes": model_codes or [],
         },
     )
 
@@ -171,6 +177,8 @@ async def upsert_chunks(
     dense_vectors: list[list[float]],
     sparse_vectors: list[SparseVec],
     tags: DocTags,
+    project_id: str | None = None,
+    model_codes: list[str] | None = None,
 ) -> None:
     """`chunks` is a list of {text, page_number?, chunk_index} dicts. The
     three vector lists must be the same length as chunks."""
@@ -194,6 +202,8 @@ async def upsert_chunks(
                     dense=dense,
                     sparse=sparse,
                     tags=tags,
+                    project_id=project_id,
+                    model_codes=model_codes,
                 )
                 for chunk, dense, sparse in zip(
                     chunks[start:end],
@@ -236,6 +246,7 @@ async def hybrid_search(
     top_k: int = 20,
     prefetch_limit: int = 40,
     min_score: float = 0.0,
+    project_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Dense + sparse prefetch -> RRF fusion. Returns top_k {score,payload}.
 
@@ -259,6 +270,12 @@ async def hybrid_search(
         ]
         if kb_ids:
             must.append(qm.FieldCondition(key="kb_id", match=qm.MatchAny(any=kb_ids)))
+        if project_id:
+            must.append(
+                qm.FieldCondition(
+                    key="project_id", match=qm.MatchValue(value=project_id)
+                )
+            )
         flt = qm.Filter(must=must)
         response = client.query_points(
             collection_name=s.qdrant_collection,

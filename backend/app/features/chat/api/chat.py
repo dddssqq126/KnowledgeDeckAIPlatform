@@ -36,7 +36,7 @@ from app.core.config import get_settings
 from app.features.chat.services import chat_service
 from app.features.knowledge_bases.services import file_service
 from app.features.mcp_tools.services import tool_service
-from app.features.rag.services import document_parser, rag
+from app.features.rag.services import document_parser, rag, project_resolver
 from services import query_pipeline
 
 logger = logging.getLogger(__name__)
@@ -577,6 +577,8 @@ async def stream_chat(
             rag_query: str | None = None
             code_assist_intent: str | None = None
             query_tags: chat_service.QueryTags | None = None
+            project_resolution: project_resolver.ProjectResolution | None = None
+            project_clarification: str | None = None
             if use_rag:
                 # Multi-turn follow-ups ("and Python?", "what about that one?")
                 # are not standalone — embedding them directly drags retrieval
@@ -601,7 +603,37 @@ async def stream_chat(
                         history=history, user_message=user_message
                     )
                 query_tags = chat_service.detect_query_tags(user_message, rag_query)
-                if deep_mode:
+                factory = async_session_factory()
+                async with factory() as resolver_session:
+                    project_resolution = await project_resolver.resolve_project(
+                        session=resolver_session,
+                        user_id=user_id,
+                        text=f"{user_message}\n{rag_query}",
+                    )
+                    if project_resolution.status == "not_found":
+                        recent_user_text = "\n".join(
+                            m.content for m in history[-4:] if m.role is ChatRole.USER
+                        )
+                        if recent_user_text:
+                            project_resolution = await project_resolver.resolve_project(
+                                session=resolver_session,
+                                user_id=user_id,
+                                text=recent_user_text,
+                            )
+                if project_resolution.status == "ambiguous":
+                    labels = ", ".join(
+                        f"{c.project_id} ({c.canonical_name})"
+                        for c in project_resolution.candidates[:5]
+                    )
+                    project_clarification = f"找到多個可能的 Project：{labels}。請指定要查詢哪一個 Project。"
+                resolved_project_id = (
+                    project_resolution.project_id
+                    if project_resolution.status == "resolved"
+                    else None
+                )
+                if project_clarification:
+                    pass
+                elif deep_mode:
                     rag_result = await rag.retrieve_context_checked(
                         user_id=user_id,
                         kb_ids=kb_ids,
@@ -609,6 +641,7 @@ async def stream_chat(
                         user_message=user_message,
                         query_tags=query_tags,
                         deep_mode=True,
+                        project_id=resolved_project_id,
                     )
                     context = rag_result.context
                     citations = rag_result.citations
@@ -620,7 +653,11 @@ async def stream_chat(
                         query=rag_query,
                         query_tags=query_tags,
                         deep_mode=False,
+                        project_id=resolved_project_id,
                     )
+                if project_resolution.status == "resolved":
+                    project_context = project_resolution.context_block()
+                    context = f"{project_context}\n\n{context}" if context else project_context
 
             if attachment_context:
                 context = (
@@ -648,6 +685,12 @@ async def stream_chat(
                         touched.updated_at = datetime.now(timezone.utc)
                     await save_session.commit()
                     return assistant_message_id
+
+            if project_clarification:
+                yield _sse("token", {"text": project_clarification})
+                assistant_message_id = await persist_assistant_message(project_clarification)
+                yield _sse("done", {"message_id": assistant_message_id})
+                return
 
             if use_rag:
                 try:

@@ -187,6 +187,8 @@ async def ingest_file(
             dense_vectors=dense_vectors,
             sparse_vectors=sparse_vectors,
             tags=tags,
+            project_id=file_row.project_id,
+            model_codes=file_row.model_codes or [],
         )
 
         file_row.status = FileStatus.INDEXED

@@ -69,6 +69,30 @@ class KnowledgeBase(Base):
     )
 
 
+class Project(Base):
+    __tablename__ = "projects"
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(ID_TYPE, ForeignKey("users.id"), nullable=False)
+    project_id: Mapped[str] = mapped_column(Text, nullable=False)
+    canonical_name: Mapped[str] = mapped_column(Text, nullable=False)
+    model_codes: Mapped[list[str]] = mapped_column(sa.JSON, nullable=False, default=list)
+    status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    aliases: Mapped[list["ProjectAlias"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    __table_args__ = (Index("uq_projects_owner_project_id", "owner_user_id", "project_id", unique=True),)
+
+
+class ProjectAlias(Base):
+    __tablename__ = "project_aliases"
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
+    project_pk: Mapped[int] = mapped_column(ID_TYPE, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    normalized_alias: Mapped[str] = mapped_column(Text, nullable=False)
+    display_alias: Mapped[str] = mapped_column(Text, nullable=False)
+    project: Mapped[Project] = relationship(back_populates="aliases")
+    __table_args__ = (Index("ix_project_aliases_normalized", "normalized_alias"),)
+
+
 class KnowledgeFile(Base):
     __tablename__ = "files"
 
@@ -101,6 +125,8 @@ class KnowledgeFile(Base):
     tag_vendor: Mapped[str | None] = mapped_column(Text, nullable=True)
     tag_platform: Mapped[str | None] = mapped_column(Text, nullable=True)
     tag_knowledge_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    project_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_codes: Mapped[list[str] | None] = mapped_column(sa.JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
