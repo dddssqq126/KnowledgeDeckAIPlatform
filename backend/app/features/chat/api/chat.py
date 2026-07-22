@@ -33,7 +33,7 @@ from app.db.models import (
     User,
 )
 from app.core.config import get_settings
-from app.features.chat.services import chat_service
+from app.features.chat.services import chat_service, project_context
 from app.features.knowledge_bases.services import file_service
 from app.features.mcp_tools.services import tool_service
 from app.features.rag.services import document_parser, rag
@@ -578,6 +578,14 @@ async def stream_chat(
             code_assist_intent: str | None = None
             query_tags: chat_service.QueryTags | None = None
             if use_rag:
+                # Resolve structured project metadata before rewriting and RAG.
+                # A specific project/model returns one row; a customer-only
+                # query returns at most five recent projects.
+                factory = async_session_factory()
+                async with factory() as project_session:
+                    project_info_context = await project_context.load_project_context(
+                        project_session, user_message
+                    )
                 # Multi-turn follow-ups ("and Python?", "what about that one?")
                 # are not standalone — embedding them directly drags retrieval
                 # off-topic. Rewriter resolves references against history into
@@ -620,6 +628,12 @@ async def stream_chat(
                         query=rag_query,
                         query_tags=query_tags,
                         deep_mode=False,
+                    )
+                if project_info_context:
+                    context = (
+                        f"{project_info_context}\n\n{context}"
+                        if context
+                        else project_info_context
                     )
 
             if attachment_context:
@@ -676,8 +690,12 @@ async def stream_chat(
                     logger.exception(
                         "query_pipeline_failed session=%s user=%s", session_id, user_id
                     )
-                    fallback_note = "API 查詢暫時失敗，以下先依據既有 RAG 文件內容回答。"
-                    context = f"{context}\n\n{fallback_note}" if context else fallback_note
+                    fallback_note = (
+                        "API 查詢暫時失敗，以下先依據既有 RAG 文件內容回答。"
+                    )
+                    context = (
+                        f"{context}\n\n{fallback_note}" if context else fallback_note
+                    )
                     query_pipeline_result = None
 
             if (

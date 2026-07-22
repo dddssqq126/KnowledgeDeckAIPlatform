@@ -29,6 +29,32 @@ class User(Base):
     )
 
 
+class ProjectInfo(Base):
+    """Project metadata made available to chat before document retrieval."""
+
+    __tablename__ = "project_info"
+
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
+    customer_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    customer_name: Mapped[str] = mapped_column(Text, nullable=False)
+    project_name: Mapped[str] = mapped_column(Text, nullable=False)
+    model_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    project_data: Mapped[dict[str, Any] | None] = mapped_column(sa.JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_project_info_customer_code", "customer_code"),
+        Index("ix_project_info_customer_name", "customer_name"),
+        Index("ix_project_info_project_name", "project_name"),
+        Index("ix_project_info_model_id", "model_id"),
+    )
+
+
 class FileStatus(enum.Enum):
     UPLOADED = "uploaded"
     PARSING = "parsing"
@@ -54,9 +80,7 @@ class KnowledgeBase(Base):
         DateTime(timezone=True), nullable=True
     )
 
-    files: Mapped[list["KnowledgeFile"]] = relationship(
-        back_populates="knowledge_base"
-    )
+    files: Mapped[list["KnowledgeFile"]] = relationship(back_populates="knowledge_base")
 
     __table_args__ = (
         Index(
@@ -169,7 +193,9 @@ class ChatMessage(Base):
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     # List of {"file_id": int, "filename": str} dicts. NULL on user messages.
-    citations: Mapped[list[dict[str, Any]] | None] = mapped_column(sa.JSON, nullable=True)
+    citations: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        sa.JSON, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -325,7 +351,9 @@ class SlideMessage(Base):
         nullable=False,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    citations: Mapped[list[dict[str, Any]] | None] = mapped_column(sa.JSON, nullable=True)
+    citations: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        sa.JSON, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

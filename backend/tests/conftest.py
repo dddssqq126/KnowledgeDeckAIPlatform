@@ -8,7 +8,12 @@ import pytest_asyncio
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import NullPool
 from testcontainers.postgres import PostgresContainer
 
@@ -22,7 +27,9 @@ if sys.platform == "win32":
 def postgres_url() -> AsyncIterator[str]:
     with PostgresContainer("postgres:16-alpine") as container:
         sync_url = container.get_connection_url()
-        async_url = sync_url.replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
+        async_url = sync_url.replace(
+            "postgresql+psycopg2://", "postgresql+psycopg://", 1
+        )
         if async_url.startswith("postgresql://"):
             async_url = async_url.replace("postgresql://", "postgresql+psycopg://", 1)
         yield async_url
@@ -31,7 +38,9 @@ def postgres_url() -> AsyncIterator[str]:
 @pytest.fixture(scope="session", autouse=True)
 def _run_migrations(postgres_url: str) -> None:
     config = Config(str(BACKEND_ROOT / "alembic.ini"))
-    config.set_main_option("script_location", str(BACKEND_ROOT / "app" / "db" / "migrations"))
+    config.set_main_option(
+        "script_location", str(BACKEND_ROOT / "app" / "db" / "migrations")
+    )
     config.set_main_option("sqlalchemy.url", postgres_url)
     command.upgrade(config, "head")
 
@@ -58,9 +67,12 @@ async def db_session(shared_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
     """Per-test clean state via TRUNCATE; tests may freely commit."""
     factory = async_sessionmaker(shared_engine, expire_on_commit=False)
     async with factory() as setup:
-        await setup.execute(text(
-            "TRUNCATE TABLE files, knowledge_bases, users RESTART IDENTITY CASCADE"
-        ))
+        await setup.execute(
+            text(
+                "TRUNCATE TABLE project_info, files, knowledge_bases, users "
+                "RESTART IDENTITY CASCADE"
+            )
+        )
         await setup.commit()
 
     async with factory() as session:
