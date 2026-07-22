@@ -80,7 +80,6 @@ async def test_project_or_model_lookup_returns_one_row(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_unlabelled_customer_code_returns_five_projects(db_session) -> None:
-    assert project_context._IDENTIFIER_CANDIDATE.findall("給我111的產品資訊") == ["111"]
     db_session.add_all(
         [
             ProjectInfo(
@@ -102,6 +101,89 @@ async def test_unlabelled_customer_code_returns_five_projects(db_session) -> Non
     assert context.count('"project":') == 5
     assert '"project": "Product 6"' in context
     assert '"project": "Product 1"' not in context
+    assert (
+        await project_context.resolve_entities_from_catalog(
+            db_session, "給我1112的產品資訊"
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_catalog_maps_unlabelled_project_and_model_before_llm(
+    db_session, monkeypatch
+) -> None:
+    db_session.add_all(
+        [
+            ProjectInfo(
+                customer_code="111",
+                customer_name="Acme",
+                project_name="Falcon",
+                model_id="FX-100",
+                project_data={"matched": "falcon"},
+            ),
+            ProjectInfo(
+                customer_code="222",
+                customer_name="Beta",
+                project_name="Falcon Pro",
+                model_id="FP-200",
+                project_data={"matched": "falcon-pro"},
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    async def llm_must_not_run(_query: str) -> project_context.ProjectEntities:
+        raise AssertionError("catalog match should happen before LLM extraction")
+
+    monkeypatch.setattr(project_context, "extract_project_entities", llm_must_not_run)
+
+    project_result = await project_context.load_project_context(
+        db_session, "給我 Falcon Pro 的產品資訊"
+    )
+    model_result = await project_context.load_project_context(
+        db_session, "請列出 fp－200 的資訊"
+    )
+
+    assert '"project": "Falcon Pro"' in project_result
+    assert '"project": "Falcon"' not in project_result
+    assert '"model_id": "FP-200"' in model_result
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_catalog_match_falls_back_to_llm(
+    db_session, monkeypatch
+) -> None:
+    db_session.add_all(
+        [
+            ProjectInfo(
+                customer_name="Acme",
+                project_name="Alpha",
+                model_id="A-1",
+            ),
+            ProjectInfo(
+                customer_name="Beta",
+                project_name="Bravo",
+                model_id="B-1",
+            ),
+        ]
+    )
+    await db_session.commit()
+    called = False
+
+    async def disambiguate(_query: str) -> project_context.ProjectEntities:
+        nonlocal called
+        called = True
+        return project_context.ProjectEntities(project="Bravo", customer="Beta")
+
+    monkeypatch.setattr(project_context, "extract_project_entities", disambiguate)
+
+    context = await project_context.load_project_context(
+        db_session, "比較 Alpha 和 Bravo project"
+    )
+
+    assert called is True
+    assert '"customer": "Beta"' in context
 
 
 @pytest.mark.asyncio

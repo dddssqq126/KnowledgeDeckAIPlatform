@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -41,12 +42,11 @@ customer_code is an explicitly labelled customer/client code, customer is a
 customer/client/company name, project is a project name, and model_id is a
 product/model identifier. Never infer a value that the user did not state."""
 
-# Candidate identifiers are resolved against the database before calling the LLM.
-# This lets terse queries such as "給我111的產品資訊" work without requiring the
-# user to label 111 as a customer code. Boundaries prevent matching 111 inside 1112.
-_IDENTIFIER_CANDIDATE = re.compile(
-    r"(?<![A-Za-z0-9._-])[A-Za-z0-9][A-Za-z0-9._-]{0,199}"
-    r"(?![A-Za-z0-9._-])"
+_CATALOG_FIELDS = (
+    ProjectInfo.customer_code,
+    ProjectInfo.customer_name,
+    ProjectInfo.project_name,
+    ProjectInfo.model_id,
 )
 
 
@@ -163,6 +163,75 @@ async def find_project_info(
     return []
 
 
+def _normalize_for_match(value: str) -> str:
+    """Normalize case, full-width characters and separators for name matching."""
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    return "".join(character for character in normalized if character.isalnum())
+
+
+def _catalog_value_is_in_query(
+    *, query: str, value: str, identifier: bool = False
+) -> bool:
+    if identifier:
+        normalized_query = unicodedata.normalize("NFKC", query).casefold()
+        normalized_value = unicodedata.normalize("NFKC", value).casefold().strip()
+        if not normalized_value:
+            return False
+        pattern = rf"(?<![a-z0-9]){re.escape(normalized_value)}(?![a-z0-9])"
+        return re.search(pattern, normalized_query) is not None
+    normalized_value = _normalize_for_match(value)
+    if len(normalized_value) < 2:
+        return False
+    return normalized_value in _normalize_for_match(query)
+
+
+async def resolve_entities_from_catalog(
+    session: AsyncSession, user_query: str
+) -> ProjectEntities | None:
+    """Resolve known DB values in the query, preferring the most specific match.
+
+    The catalog is intentionally read from the source of truth on each request:
+    roughly 2,000 narrow rows are cheap to scan and this avoids stale process-local
+    caches. If equally strong values point to different entities, return ``None``
+    and let the LLM fallback disambiguate instead of choosing arbitrarily.
+    """
+    catalog = (await session.execute(select(*_CATALOG_FIELDS))).all()
+    # Model and project identify one row. Customer code/name identify a customer
+    # and therefore preserve the existing five-project behavior.
+    field_specs = (
+        ("model_id", 4, 3),
+        ("project", 3, 2),
+        ("customer_code", 2, 0),
+        ("customer", 1, 1),
+    )
+    matches: list[tuple[int, int, str, str]] = []
+    for row in catalog:
+        values = tuple(row)
+        for entity_field, priority, column_index in field_specs:
+            value = values[column_index]
+            if value and _catalog_value_is_in_query(
+                query=user_query,
+                value=value,
+                identifier=entity_field in {"model_id", "customer_code"},
+            ):
+                matches.append(
+                    (priority, len(_normalize_for_match(value)), entity_field, value)
+                )
+
+    if not matches:
+        return None
+    best_score = max((priority, length) for priority, length, _, _ in matches)
+    best = {
+        (field, value.casefold()): value
+        for priority, length, field, value in matches
+        if (priority, length) == best_score
+    }
+    if len(best) != 1:
+        return None
+    (field, _), value = next(iter(best.items()))
+    return ProjectEntities(**{field: value})
+
+
 def format_project_context(rows: list[ProjectInfo]) -> str:
     if not rows:
         return ""
@@ -182,20 +251,14 @@ def format_project_context(rows: list[ProjectInfo]) -> str:
 
 
 async def load_project_context(session: AsyncSession, user_query: str) -> str:
-    # Resolve every compact token against customer_code first. Customer codes are
-    # authoritative DB values, so an unlabeled code does not need an LLM guess.
-    candidates = list(dict.fromkeys(_IDENTIFIER_CANDIDATE.findall(user_query)))
-    if candidates:
-        normalized = [candidate.casefold() for candidate in candidates]
-        statement = (
-            select(ProjectInfo)
-            .where(func.lower(ProjectInfo.customer_code).in_(normalized))
-            .order_by(ProjectInfo.updated_at.desc(), ProjectInfo.id.desc())
-            .limit(5)
-        )
-        rows = list((await session.scalars(statement)).all())
+    # Deterministic DB mapping is faster and more reliable than an LLM call for
+    # known customer codes, customer names, project names and model IDs.
+    catalog_entities = await resolve_entities_from_catalog(session, user_query)
+    if catalog_entities is not None:
+        rows = await find_project_info(session, catalog_entities)
         if rows:
             return format_project_context(rows)
 
+    # Use the LLM only for natural-language extraction or catalog ambiguity.
     entities = await extract_project_entities(user_query)
     return format_project_context(await find_project_info(session, entities))
