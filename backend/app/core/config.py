@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     qdrant_url: str = ""
     qdrant_path: str = "./qdrant_data"
     qdrant_collection: str = "knowledgedeck"
+    qdrant_image_collection: str = "knowledgedeck_images"
     # Cap each Qdrant upsert request so large files do not exceed
     # HTTP/JSON payload limits.
     qdrant_upsert_batch_size: int = 64
@@ -86,6 +87,7 @@ class Settings(BaseSettings):
     rag_rerank_candidate_k: int = 40
     rag_hybrid_prefetch_limit: int = 80
     rag_final_top_k: int = 7
+    rag_image_final_top_k: int = 5
     # Limit repeated chunks from one file so final context covers more likely
     # documents instead of filling the prompt with near-duplicates.
     rag_per_file_context_limit: int = 3

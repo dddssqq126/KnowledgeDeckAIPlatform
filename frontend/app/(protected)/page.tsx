@@ -5,12 +5,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ChatInput } from "../../components/ChatInput";
+import { RelatedImageStrip } from "../../components/RelatedImageStrip";
 import { CopyButton, MarkdownMessage } from "../../components/MarkdownMessage";
 import { exportAssistantAnswer, exportChatSession } from "../../lib/chat-export";
 import {
   type ChatMessage,
   type Citation,
   type ChatFeedback,
+  type RelatedImage,
   getSession,
   sendMessageFeedback,
   shareChatSession,
@@ -37,6 +39,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streamingText, setStreamingText] = useState("");
   const [streamingCitations, setStreamingCitations] = useState<Citation[] | null>(null);
+  const [streamingImages, setStreamingImages] = useState<RelatedImage[] | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
@@ -137,16 +140,19 @@ export default function ChatPage() {
         role: "user",
         content: text,
         citations: null,
+        related_images: null,
         created_at: new Date().toISOString(),
       };
       setMessages((current) => [...current, optimisticUser]);
       setStreamingText("");
       setStreamingCitations(null);
+      setStreamingImages(null);
       setStreamError(null);
       setIsStreaming(true);
 
       let collected = "";
       let collectedCitations: Citation[] = [];
+      let collectedImages: RelatedImage[] = [];
 
       await streamChat(
         {
@@ -166,17 +172,23 @@ export default function ChatPage() {
             collectedCitations = items;
             setStreamingCitations(items);
           },
+          onImages: (items) => {
+            collectedImages = items;
+            setStreamingImages(items);
+          },
           onDone: (data) => {
             const finalAssistant: ChatMessage = {
               id: data?.message_id ?? -Date.now() - 1,
               role: "assistant",
               content: collected,
               citations: collectedCitations.length ? collectedCitations : null,
+              related_images: collectedImages.length ? collectedImages : null,
               created_at: new Date().toISOString(),
             };
             setMessages((current) => [...current, finalAssistant]);
             setStreamingText("");
             setStreamingCitations(null);
+            setStreamingImages(null);
             setIsStreaming(false);
             bumpUpdatedAt(sid!);
             refresh();
@@ -281,6 +293,7 @@ export default function ChatPage() {
                 role: "assistant",
                 content: streamingText,
                 citations: streamingCitations,
+                related_images: streamingImages,
                 created_at: new Date().toISOString(),
               }}
               sessionTitle={activeSessionTitle}
@@ -348,6 +361,9 @@ function MessageBubble({
           )}
           {message.citations && message.citations.length > 0 ? (
             <CitationList citations={message.citations} />
+          ) : null}
+          {!isUser && message.related_images?.length ? (
+            <RelatedImageStrip images={message.related_images} />
           ) : null}
         </div>
         <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">

@@ -7,6 +7,7 @@ dependency. Sessions are user-scoped — cross-user access returns 404.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import secrets
@@ -36,7 +37,7 @@ from app.core.config import get_settings
 from app.features.chat.services import chat_service
 from app.features.knowledge_bases.services import file_service
 from app.features.mcp_tools.services import tool_service
-from app.features.rag.services import document_parser, rag, project_resolver
+from app.features.rag.services import document_parser, image_rag, rag, project_resolver
 from services import query_pipeline
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ class MessageOut(BaseModel):
     role: str
     content: str
     citations: list[dict[str, Any]] | None
+    related_images: list[dict[str, Any]] | None
     created_at: str
 
 
@@ -179,12 +181,13 @@ def _session_out(s: ChatSession) -> SessionOut:
     )
 
 
-def _message_out(m: ChatMessage) -> MessageOut:
+def _message_out(m: ChatMessage, *, include_images: bool = True) -> MessageOut:
     return MessageOut(
         id=m.id,
         role=m.role.value,
         content=m.content,
         citations=m.citations,
+        related_images=m.related_images if include_images else None,
         created_at=m.created_at.isoformat(),
     )
 
@@ -308,7 +311,7 @@ async def get_shared_session(
         title=s.title,
         created_at=s.created_at.isoformat(),
         updated_at=s.updated_at.isoformat(),
-        messages=[_message_out(m) for m in s.messages],
+        messages=[_message_out(m, include_images=False) for m in s.messages],
     )
 
 
@@ -551,7 +554,11 @@ async def stream_chat(
     )
     history = list(s.messages)
     user_msg = ChatMessage(
-        session_id=s.id, role=ChatRole.USER, content=body.message, citations=None
+        session_id=s.id,
+        role=ChatRole.USER,
+        content=body.message,
+        citations=None,
+        related_images=None,
     )
     session.add(user_msg)
     # Auto-title from first user message (within ~50 chars, single line).
@@ -571,6 +578,7 @@ async def stream_chat(
     async def generator() -> AsyncIterator[str]:
         try:
             citations: list[dict[str, Any]] = []
+            related_images: list[dict[str, Any]] = []
             context = ""
             query_pipeline_result: query_pipeline.QueryPipelineResult | None = None
             retrieval_note: str | None = None
@@ -634,27 +642,44 @@ async def stream_chat(
                 if project_clarification:
                     pass
                 elif deep_mode:
-                    rag_result = await rag.retrieve_context_checked(
-                        user_id=user_id,
-                        kb_ids=kb_ids,
-                        query=rag_query,
-                        user_message=user_message,
-                        query_tags=query_tags,
-                        deep_mode=True,
-                        project_id=resolved_project_id,
+                    rag_result, related_images = await asyncio.gather(
+                        rag.retrieve_context_checked(
+                            user_id=user_id,
+                            kb_ids=kb_ids,
+                            query=rag_query,
+                            user_message=user_message,
+                            query_tags=query_tags,
+                            deep_mode=True,
+                            project_id=resolved_project_id,
+                        ),
+                        image_rag.retrieve_images(
+                            user_id=user_id,
+                            kb_ids=kb_ids,
+                            query=rag_query,
+                            project_id=resolved_project_id,
+                        ),
                     )
                     context = rag_result.context
                     citations = rag_result.citations
                     retrieval_note = rag_result.diagnostics.retrieval_note()
                 else:
-                    context, citations = await rag.retrieve_context(
-                        user_id=user_id,
-                        kb_ids=kb_ids,
-                        query=rag_query,
-                        query_tags=query_tags,
-                        deep_mode=False,
-                        project_id=resolved_project_id,
+                    document_result, related_images = await asyncio.gather(
+                        rag.retrieve_context(
+                            user_id=user_id,
+                            kb_ids=kb_ids,
+                            query=rag_query,
+                            query_tags=query_tags,
+                            deep_mode=False,
+                            project_id=resolved_project_id,
+                        ),
+                        image_rag.retrieve_images(
+                            user_id=user_id,
+                            kb_ids=kb_ids,
+                            query=rag_query,
+                            project_id=resolved_project_id,
+                        ),
                     )
+                    context, citations = document_result
                 if project_resolution.status == "resolved":
                     project_context = project_resolution.context_block()
                     context = f"{project_context}\n\n{context}" if context else project_context
@@ -674,6 +699,7 @@ async def stream_chat(
                         role=ChatRole.ASSISTANT,
                         content=content,
                         citations=citations or None,
+                        related_images=related_images or None,
                     )
                     save_session.add(assistant_message)
                     await save_session.flush()
@@ -734,6 +760,7 @@ async def stream_chat(
                 yield _sse("token", {"text": message})
                 assistant_message_id = await persist_assistant_message(message)
                 yield _sse("citations", {"items": citations})
+                yield _sse("images", {"items": related_images})
                 yield _sse("done", {"message_id": assistant_message_id})
                 return
 
@@ -769,6 +796,7 @@ async def stream_chat(
             assistant_message_id = await persist_assistant_message("".join(collected))
 
             yield _sse("citations", {"items": citations})
+            yield _sse("images", {"items": related_images})
             yield _sse("done", {"message_id": assistant_message_id})
         except Exception as exc:  # pragma: no cover - prototype
             logger.exception("chat_stream_failed session=%s", session_id)

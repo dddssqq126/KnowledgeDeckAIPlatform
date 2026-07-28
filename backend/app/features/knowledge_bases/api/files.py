@@ -17,9 +17,10 @@ from app.shared.api.deps import get_current_user
 from app.core.config import get_settings
 from app.db.base import get_db
 from app.db.models import FileStatus, KnowledgeBase, KnowledgeFile, User
+from app.db.models import KnowledgeImage
 from app.features.knowledge_bases.services import file_service
 from app.features.rag.services import qdrant_store, tagger
-from app.features.rag.services import ingestion
+from app.features.rag.services import image_ingestion, ingestion
 from app.features.knowledge_bases.services.object_storage import get_storage_client
 
 router = APIRouter(prefix="/knowledge-bases", tags=["files"])
@@ -288,6 +289,44 @@ async def download_file(
     )
 
 
+@router.get("/images/{image_id}/content")
+async def get_image_content(
+    image_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    row = await session.scalar(
+        select(KnowledgeImage).where(
+            KnowledgeImage.id == image_id,
+            KnowledgeImage.owner_user_id == user.id,
+        )
+    )
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="image_not_found")
+    file_row = await session.scalar(
+        select(KnowledgeFile).where(
+            KnowledgeFile.id == row.file_id,
+            KnowledgeFile.deleted_at.is_(None),
+        )
+    )
+    if file_row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="image_not_found")
+    try:
+        data = await get_storage_client().get_object(row.storage_key)
+    except Exception:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, detail="storage_error"
+        )
+    return Response(
+        content=data,
+        media_type=row.content_type,
+        headers={
+            "Content-Length": str(len(data)),
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
+
+
 @router.patch("/{kb_id}/files/{file_id}/tags", response_model=FileTagOut)
 async def update_file_tags(
     kb_id: int,
@@ -331,6 +370,9 @@ async def delete_file(
 ) -> None:
     await _load_owned_kb(session, owner_user_id=user.id, kb_id=kb_id)
     row = await _load_owned_file(session, kb_id=kb_id, file_id=file_id)
+    await image_ingestion.cleanup_file_images(
+        session=session, file_id=file_id, commit=False
+    )
     row.deleted_at = datetime.now(timezone.utc)
     await session.commit()
     # Best-effort Qdrant cleanup; failures are logged and ignored.

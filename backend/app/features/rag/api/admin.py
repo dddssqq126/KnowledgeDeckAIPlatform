@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.shared.api.deps import get_current_user
 from app.db.base import get_db
 from app.db.models import FileStatus, KnowledgeFile, User
-from app.features.rag.services import ingestion, qdrant_store
+from app.features.rag.services import image_store, ingestion, qdrant_store
 from app.features.knowledge_bases.services.object_storage import get_storage_client
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,7 @@ async def rag_reindex(
     """
     # 1. Drop + recreate with hybrid schema.
     await qdrant_store.rebuild_collection()
+    await image_store.rebuild_collection()
 
     # 2. Iterate every non-deleted file.
     rows = await session.scalars(

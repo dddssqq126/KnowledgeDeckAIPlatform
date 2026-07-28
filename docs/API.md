@@ -180,6 +180,10 @@ List files in a KB.
 
 Upload a file. Synchronous: parses + chunks + embeds + indexes inline. Returns the final file row with terminal status.
 
+For PPTX uploads, embedded raster pictures are also extracted, named from
+their slide text, stored separately, and indexed in the image RAG collection.
+PowerPoint shapes, icons, charts, SmartArt, and text boxes are not extracted.
+
 **Request**: `multipart/form-data` with field `file`. Accepted extensions: `txt`, `md`, `pdf`, `cs`, `py`, `html`, `css`, `docx`, `pptx`. 50 MB cap.
 
 **Response 201**: same shape as the list entry above. `status` is `indexed` on success or `failed` on any pipeline error (with `status_error` populated).
@@ -241,6 +245,13 @@ Soft-delete a file. Vectors are removed from Qdrant immediately; the MinIO objec
 
 **Errors**: `404 not_found`
 
+### GET /knowledge-bases/images/{image_id}/content
+
+Returns an extracted PPTX image after verifying that it belongs to the current
+user. The response uses the image's original content type.
+
+**Errors**: `404 image_not_found`, `500 storage_error`
+
 ---
 
 ## Chat
@@ -287,6 +298,7 @@ Session detail with full message history.
       "role": "user",
       "content": "Tell me about React hooks",
       "citations": null,
+      "related_images": null,
       "created_at": "..."
     },
     {
@@ -294,6 +306,7 @@ Session detail with full message history.
       "role": "assistant",
       "content": "Hooks let you opt into React's state management...",
       "citations": [{"file_id": 12, "filename": "react_hooks.txt"}],
+      "related_images": [],
       "created_at": "..."
     }
   ]
@@ -345,8 +358,11 @@ data: {"text": "let "}
 event: citations
 data: {"items": [{"file_id": 12, "filename": "react_hooks.txt"}, ...]}
 
+event: images
+data: {"items": [{"id": 9, "name": "Quarterly revenue trend", "source_filename": "sales.pptx", "page_number": 3, "content_url": "/knowledge-bases/images/9/content"}]}
+
 event: done
-data: {}
+data: {"message_id": 101}
 ```
 
 On error:
@@ -363,6 +379,7 @@ The user message is persisted before streaming starts; the assistant message is 
 3. Cross-encoder rerank scores each candidate; below `RAG_RERANK_MIN_SCORE` is dropped.
 4. Top `RAG_FINAL_TOP_K` (default 5) chunks become the prompt's `Context:` block.
 5. Citations in the SSE event are unique by file_id and reflect what actually went into the prompt.
+6. Image RAG runs in parallel with document RAG and returns at most five independently relevant PPTX images.
 
 **Example**:
 ```bash

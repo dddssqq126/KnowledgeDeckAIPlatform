@@ -135,6 +135,9 @@ class KnowledgeFile(Base):
     )
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="files")
+    images: Mapped[list["KnowledgeImage"]] = relationship(
+        back_populates="file", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         Index(
@@ -143,6 +146,50 @@ class KnowledgeFile(Base):
             "filename",
             unique=True,
             postgresql_where=sa.text("deleted_at IS NULL"),
+        ),
+    )
+
+
+class KnowledgeImage(Base):
+    __tablename__ = "knowledge_images"
+
+    id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True)
+    file_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("files.id", ondelete="CASCADE"), nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("users.id"), nullable=False
+    )
+    knowledge_base_id: Mapped[int] = mapped_column(
+        ID_TYPE, ForeignKey("knowledge_bases.id"), nullable=False
+    )
+    page_number: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    image_index: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    page_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    content_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    extension: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(ID_TYPE, nullable=False)
+    width_emu: Mapped[int | None] = mapped_column(ID_TYPE, nullable=True)
+    height_emu: Mapped[int | None] = mapped_column(ID_TYPE, nullable=True)
+    storage_key: Mapped[str] = mapped_column(Text, nullable=False)
+    indexed: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    file: Mapped[KnowledgeFile] = relationship(back_populates="images")
+
+    __table_args__ = (
+        Index("ix_knowledge_images_file_id", "file_id"),
+        Index("ix_knowledge_images_owner_kb", "owner_user_id", "knowledge_base_id"),
+        Index(
+            "uq_knowledge_images_file_hash",
+            "file_id",
+            "content_sha256",
+            unique=True,
         ),
     )
 
@@ -196,6 +243,9 @@ class ChatMessage(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     # List of {"file_id": int, "filename": str} dicts. NULL on user messages.
     citations: Mapped[list[dict[str, Any]] | None] = mapped_column(sa.JSON, nullable=True)
+    related_images: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        sa.JSON, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

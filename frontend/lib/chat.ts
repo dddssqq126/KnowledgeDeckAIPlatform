@@ -16,6 +16,14 @@ export type Citation = {
   project_id?: string | null;
 };
 
+export type RelatedImage = {
+  id: number;
+  name: string;
+  source_filename: string;
+  page_number: number;
+  content_url: string;
+};
+
 export type ChatSession = {
   id: number;
   title: string;
@@ -30,6 +38,7 @@ export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   citations: Citation[] | null;
+  related_images?: RelatedImage[] | null;
   created_at: string;
 };
 
@@ -110,6 +119,7 @@ export type StreamRequest = {
 export type StreamHandlers = {
   onToken: (text: string) => void;
   onCitations: (items: Citation[]) => void;
+  onImages: (items: RelatedImage[]) => void;
   onDone: (data?: { message_id?: number }) => void;
   onError: (message: string) => void;
 };
@@ -218,6 +228,7 @@ export async function streamChat(
       }
       if (event === "token") handlers.onToken(parsed.text ?? "");
       else if (event === "citations") handlers.onCitations(parsed.items ?? []);
+      else if (event === "images") handlers.onImages(parsed.items ?? []);
       else if (event === "done") handlers.onDone(parsed);
       else if (event === "error") handlers.onError(parsed.message ?? "stream error");
     }
@@ -236,6 +247,7 @@ async function mockStreamChat(
     req.kb_ids,
   );
   handlers.onCitations(citations);
+  handlers.onImages([]);
   for (const token of chunkText(answer)) {
     if (signal?.aborted) {
       handlers.onError("cancelled");

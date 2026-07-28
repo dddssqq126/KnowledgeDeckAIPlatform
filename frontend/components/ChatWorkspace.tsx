@@ -12,11 +12,13 @@ import { useChatSessionsStore } from "../lib/chat-store";
 import {
   type ChatMessage,
   type Citation,
+  type RelatedImage,
   type ChatFeedback,
   getSession,
   sendMessageFeedback,
   streamChat,
 } from "../lib/chat";
+import { RelatedImageStrip } from "./RelatedImageStrip";
 import { useKbStore } from "../lib/kb-store";
 import { useLlmInfo } from "../lib/llm-info";
 
@@ -48,6 +50,7 @@ export function ChatWorkspace({
 
   const [streamingText, setStreamingText] = useState("");
   const [streamingCitations, setStreamingCitations] = useState<Citation[] | null>(null);
+  const [streamingImages, setStreamingImages] = useState<RelatedImage[] | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
 
@@ -111,16 +114,19 @@ export function ChatWorkspace({
         role: "user",
         content: text,
         citations: null,
+        related_images: null,
         created_at: new Date().toISOString(),
       };
       setMessages((cur) => [...cur, optimisticUser]);
       setStreamingText("");
       setStreamingCitations(null);
+      setStreamingImages(null);
       setStreamError(null);
       setIsStreaming(true);
 
       let collected = "";
       let collectedCitations: Citation[] = [];
+      let collectedImages: RelatedImage[] = [];
 
       await streamChat(
         {
@@ -139,17 +145,23 @@ export function ChatWorkspace({
             collectedCitations = items;
             setStreamingCitations(items);
           },
+          onImages: (items) => {
+            collectedImages = items;
+            setStreamingImages(items);
+          },
           onDone: () => {
             const finalAssistant: ChatMessage = {
               id: -Date.now() - 1,
               role: "assistant",
               content: collected,
               citations: collectedCitations.length ? collectedCitations : null,
+              related_images: collectedImages.length ? collectedImages : null,
               created_at: new Date().toISOString(),
             };
             setMessages((cur) => [...cur, finalAssistant]);
             setStreamingText("");
             setStreamingCitations(null);
+            setStreamingImages(null);
             setIsStreaming(false);
             bumpUpdatedAt(sid!);
             refresh();
@@ -191,6 +203,7 @@ export function ChatWorkspace({
                 role: "assistant",
                 content: streamingText || "…",
                 citations: streamingCitations,
+                related_images: streamingImages,
                 created_at: new Date().toISOString(),
               }}
               streaming
@@ -258,6 +271,9 @@ function MessageBubble({
           )}
           {message.citations ? (
             <CitationList citations={message.citations} />
+          ) : null}
+          {!isUser && message.related_images?.length ? (
+            <RelatedImageStrip images={message.related_images} />
           ) : null}
         </div>
         <div className="flex items-center gap-2 px-1 text-[10px] text-zinc-500">

@@ -9,10 +9,12 @@ Per-format behavior:
 from __future__ import annotations
 
 import io
+import hashlib
 from dataclasses import dataclass
 
 from docx import Document as DocxDocument
 from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pypdf import PdfReader
 
 
@@ -20,6 +22,66 @@ from pypdf import PdfReader
 class ParsedSegment:
     text: str
     page_number: int | None  # 1-based; None for non-paginated formats
+
+
+@dataclass
+class ParsedImage:
+    data: bytes
+    extension: str
+    content_type: str
+    content_sha256: str
+    page_number: int
+    image_index: int
+    width_emu: int | None
+    height_emu: int | None
+    page_text: str
+
+
+def _slide_text(slide: object) -> str:
+    parts: list[str] = []
+    for shape in slide.shapes:  # type: ignore[attr-defined]
+        if not shape.has_text_frame:
+            continue
+        for para in shape.text_frame.paragraphs:
+            text = "".join(run.text for run in para.runs).strip()
+            if text:
+                parts.append(text)
+    return "\n".join(parts)
+
+
+def extract_pptx_images(data: bytes) -> list[ParsedImage]:
+    """Extract embedded raster pictures only, deduplicated within the deck."""
+    prs = Presentation(io.BytesIO(data))
+    out: list[ParsedImage] = []
+    seen: set[str] = set()
+    for page_number, slide in enumerate(prs.slides, start=1):
+        page_text = _slide_text(slide)
+        image_index = 0
+        for shape in slide.shapes:
+            if shape.shape_type != MSO_SHAPE_TYPE.PICTURE:
+                continue
+            image_index += 1
+            blob = shape.image.blob
+            digest = hashlib.sha256(blob).hexdigest()
+            if digest in seen:
+                continue
+            seen.add(digest)
+            extension = (shape.image.ext or "bin").lower()
+            content_type = shape.image.content_type or "application/octet-stream"
+            out.append(
+                ParsedImage(
+                    data=blob,
+                    extension=extension,
+                    content_type=content_type,
+                    content_sha256=digest,
+                    page_number=page_number,
+                    image_index=image_index,
+                    width_emu=int(shape.width) if shape.width else None,
+                    height_emu=int(shape.height) if shape.height else None,
+                    page_text=page_text,
+                )
+            )
+    return out
 
 
 def _parse_pdf(data: bytes) -> list[ParsedSegment]:
@@ -65,15 +127,7 @@ def _parse_pptx(data: bytes) -> list[ParsedSegment]:
     prs = Presentation(io.BytesIO(data))
     out: list[ParsedSegment] = []
     for i, slide in enumerate(prs.slides, start=1):
-        parts: list[str] = []
-        for shape in slide.shapes:
-            if not shape.has_text_frame:
-                continue
-            for para in shape.text_frame.paragraphs:
-                t = "".join(run.text for run in para.runs).strip()
-                if t:
-                    parts.append(t)
-        text = "\n".join(parts)
+        text = _slide_text(slide)
         if text.strip():
             out.append(ParsedSegment(text=text, page_number=i))
     return out
