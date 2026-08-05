@@ -113,6 +113,7 @@ export type StreamRequest = {
   use_rag: boolean;
   kb_ids: number[] | null;
   deep_mode?: boolean;
+  custom_role?: string;
   attachments?: File[];
 };
 
@@ -138,9 +139,11 @@ export function buildStreamFormData(req: StreamRequest): FormData {
       use_rag: req.use_rag,
       kb_ids: req.kb_ids,
       deep_mode: req.deep_mode ?? false,
+      custom_role: req.custom_role ?? null,
     }),
   );
   form.append("deep_mode", String(req.deep_mode ?? false));
+  if (req.custom_role) form.append("custom_role", req.custom_role);
   for (const file of req.attachments ?? []) {
     form.append("files", file, file.name);
   }

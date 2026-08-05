@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Download, FileDown, Share2, ThumbsDown, ThumbsUp, User } from "lucide-react";
+import { Bot, Download, FileDown, Settings2, Share2, ThumbsDown, ThumbsUp, User } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
@@ -43,6 +43,8 @@ export default function ChatPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
+  const [roleSettingsOpen, setRoleSettingsOpen] = useState(false);
+  const [customRole, setCustomRole] = useState("");
 
   const knowledgeBases = useKbStore((s) => s.kbs);
   const kbsLoaded = useKbStore((s) => s.loaded);
@@ -161,6 +163,7 @@ export default function ChatPage() {
           use_rag: useRag,
           kb_ids: kbIds,
           deep_mode: deepMode,
+          ...(customRole.trim() ? { custom_role: customRole.trim() } : {}),
           ...(attachments.length ? { attachments } : {}),
         },
         {
@@ -200,7 +203,7 @@ export default function ChatPage() {
         },
       );
     },
-    [activeId, newChat, refresh, router, bumpUpdatedAt],
+    [activeId, newChat, refresh, router, bumpUpdatedAt, customRole],
   );
 
   const handleShareChat = useCallback(async () => {
@@ -235,6 +238,14 @@ export default function ChatPage() {
         <div className="flex items-center gap-2">
           <button
             type="button"
+            onClick={() => setRoleSettingsOpen(true)}
+            className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <Settings2 className="h-4 w-4" />
+            AI role
+          </button>
+          <button
+            type="button"
             onClick={() => void handleShareChat()}
             disabled={activeId == null || messages.length === 0}
             className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
@@ -258,6 +269,61 @@ export default function ChatPage() {
           </div>
         </div>
       </header>
+
+      {roleSettingsOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 px-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="ai-role-settings-title"
+        >
+          <div className="w-full max-w-xl rounded-2xl border border-border bg-card p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 id="ai-role-settings-title" className="text-lg font-semibold">
+                  Custom AI role
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Set the assistant tone, persona, or response format for future replies in this chat.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRoleSettingsOpen(false)}
+                className="rounded-full px-3 py-1 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                Close
+              </button>
+            </div>
+            <label className="mt-5 block text-sm font-medium" htmlFor="custom-ai-role">
+              Role / tone / format instructions
+            </label>
+            <textarea
+              id="custom-ai-role"
+              value={customRole}
+              onChange={(event) => setCustomRole(event.currentTarget.value)}
+              className="mt-2 h-40 w-full resize-none rounded-xl border border-border bg-background p-3 text-sm outline-none focus:border-primary"
+              placeholder="Example: 回覆請用資深測試工程師語氣，先給結論，再用條列式整理步驟與風險。"
+            />
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCustomRole("")}
+                className="rounded-full border border-border bg-background px-4 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={() => setRoleSettingsOpen(false)}
+                className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+              >
+                Save settings
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div
         ref={scrollContainerRef}
