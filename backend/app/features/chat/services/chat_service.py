@@ -595,10 +595,21 @@ async def stream_answer(
     query_tags: QueryTags | None = None,
     retrieval_note: str | None = None,
     query_pipeline_result: Any | None = None,
+    custom_role: str | None = None,
 ) -> AsyncIterator[str]:
     """Yields LLM token chunks as plain strings."""
     messages: list[Any] = [SystemMessage(content=SYSTEM_PROMPT)]
     messages.extend(_history_to_messages(history))
+    if custom_role:
+        messages.append(
+            SystemMessage(
+                content=(
+                    "User custom response instructions. Follow these for tone, "
+                    "persona, and output format unless they conflict with system "
+                    f"safety or grounding rules:\n{custom_role}"
+                )
+            )
+        )
     if context:
         messages.append(SystemMessage(content=f"Context:\n{context}"))
     if rag_query:

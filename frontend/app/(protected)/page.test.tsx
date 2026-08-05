@@ -171,6 +171,33 @@ describe("ChatPage", () => {
     });
   });
 
+  it("passes custom AI role instructions with chat stream requests", async () => {
+    vi.mocked(streamChat).mockResolvedValueOnce(undefined);
+    render(<ChatPage />);
+
+    await screen.findByText("Exportable answer");
+    fireEvent.click(screen.getByRole("button", { name: "AI role" }));
+    fireEvent.change(screen.getByLabelText("Role / tone / format instructions"), {
+      target: { value: "Use a senior engineer tone and answer with bullet points." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send test message" }));
+
+    await waitFor(() => {
+      expect(streamChat).toHaveBeenCalledWith(
+        {
+          session_id: 1,
+          message: "Deep question",
+          use_rag: true,
+          kb_ids: null,
+          deep_mode: false,
+          custom_role: "Use a senior engineer tone and answer with bullet points.",
+        },
+        expect.any(Object),
+      );
+    });
+  });
+
   it("records like and dislike feedback for assistant messages", async () => {
     vi.mocked(sendMessageFeedback).mockResolvedValue(undefined);
     render(<ChatPage />);

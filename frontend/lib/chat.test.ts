@@ -13,6 +13,7 @@ describe("buildStreamFormData", () => {
       use_rag: true,
       kb_ids: [1, 2],
       deep_mode: true,
+      custom_role: "Answer as a concise reviewer.",
       attachments: [first, second],
     });
 
@@ -21,12 +22,14 @@ describe("buildStreamFormData", () => {
     expect(form.get("use_rag")).toBe("true");
     expect(form.get("kb_ids")).toBe("[1,2]");
     expect(form.get("deep_mode")).toBe("true");
+    expect(form.get("custom_role")).toBe("Answer as a concise reviewer.");
     expect(JSON.parse(String(form.get("payload")))).toEqual({
       session_id: 12,
       message: "Use these",
       use_rag: true,
       kb_ids: [1, 2],
       deep_mode: true,
+      custom_role: "Answer as a concise reviewer.",
     });
     expect(form.getAll("files")).toEqual([first, second]);
   });
