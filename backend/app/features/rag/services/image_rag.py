@@ -80,8 +80,11 @@ async def retrieve_images(
                 "id": image_id,
                 "name": payload["name"],
                 "source_filename": payload["filename"],
+                "source_file_id": int(payload["file_id"]),
+                "source_extension": str(payload["filename"]).rsplit(".", 1)[-1].lower(),
                 "page_number": int(payload["page_number"]),
                 "content_url": f"/knowledge-bases/images/{image_id}/content",
+                "source_download_url": f"/knowledge-bases/files/{int(payload['file_id'])}/download",
             }
         )
         if len(related) >= settings.rag_image_final_top_k:

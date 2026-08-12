@@ -1,12 +1,19 @@
 "use client";
 
-import { X } from "lucide-react";
+import { Download, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api } from "../lib/api";
 import type { RelatedImage } from "../lib/chat";
+import { downloadKnowledgeFile } from "../lib/knowledge-bases";
 
 type LoadedImage = RelatedImage & { objectUrl: string };
+
+function sourceLabel(image: RelatedImage): string {
+  return image.source_extension === "pptx"
+    ? `${image.source_filename} · PPTX slide ${image.page_number}`
+    : `${image.source_filename} · PDF page ${image.page_number}`;
+}
 
 export function RelatedImageStrip({ images }: { images: RelatedImage[] }) {
   const [loaded, setLoaded] = useState<LoadedImage[]>([]);
@@ -62,6 +69,9 @@ export function RelatedImageStrip({ images }: { images: RelatedImage[] }) {
               <span className="block truncate px-2 py-1.5 text-xs" title={image.name}>
                 {image.name}
               </span>
+              <span className="block truncate px-2 pb-1.5 text-[11px] text-muted-foreground" title={sourceLabel(image)}>
+                {sourceLabel(image)}
+              </span>
             </button>
           ))}
         </div>
@@ -92,9 +102,14 @@ export function RelatedImageStrip({ images }: { images: RelatedImage[] }) {
               className="max-h-[75vh] max-w-full object-contain"
             />
             <div className="mt-3 font-medium">{selected.name}</div>
-            <div className="text-sm text-muted-foreground">
-              {selected.source_filename} · Slide {selected.page_number}
-            </div>
+            <div className="text-sm text-muted-foreground">{sourceLabel(selected)}</div>
+            <button
+              type="button"
+              onClick={() => void downloadKnowledgeFile(selected.source_file_id, selected.source_filename)}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
+            >
+              <Download className="h-4 w-4" /> Download source file
+            </button>
           </div>
         </div>
       ) : null}

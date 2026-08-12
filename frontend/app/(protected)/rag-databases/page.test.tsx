@@ -181,6 +181,7 @@ function file(id: number, knowledgeBaseId: number, filename: string, extension: 
     knowledge_base_id: knowledgeBaseId,
     filename,
     extension,
+    ingestion_mode: "document" as const,
     size_bytes: 1024,
     status: "indexed" as const,
     status_error: null,

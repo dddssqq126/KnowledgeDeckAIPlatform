@@ -76,6 +76,7 @@ describe("knowledge-bases API client", () => {
     mock.onPost("/knowledge-bases/3/files").reply((config) => {
       expect(config.data).toBeInstanceOf(FormData);
       expect(config.data.get("file")).toBeInstanceOf(File);
+      expect(config.data.get("ingestion_mode")).toBe("document");
       expect(config.timeout).toBe(LONG_RUNNING_REQUEST_TIMEOUT_MS);
       return [
         201,

@@ -30,4 +30,11 @@ describe("DropUpload accepted file types", () => {
     expect(screen.queryByText("legacy.ppt")).not.toBeInTheDocument();
     expect(screen.getByText("1 file skipped (unsupported format).")).toBeInTheDocument();
   });
+
+  it("provides a PDF/PPTX-only image extraction input", () => {
+    const view = renderDropUpload();
+    const inputs = view.container.querySelectorAll('input[type="file"]');
+    expect(inputs[1]).toHaveAttribute("accept", ".pdf,.pptx");
+    expect(screen.getByRole("button", { name: /extract images/i })).toBeInTheDocument();
+  });
 });

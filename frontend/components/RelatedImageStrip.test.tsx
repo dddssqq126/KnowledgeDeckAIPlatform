@@ -30,8 +30,11 @@ describe("RelatedImageStrip", () => {
             id: 9,
             name: "季度營收圖",
             source_filename: "sales.pptx",
+            source_file_id: 4,
+            source_extension: "pptx",
             page_number: 3,
             content_url: "/knowledge-bases/images/9/content",
+            source_download_url: "/knowledge-bases/files/4/download",
           },
         ]}
       />,
@@ -41,6 +44,7 @@ describe("RelatedImageStrip", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open 季度營收圖" }));
 
     expect(screen.getByRole("dialog", { name: "季度營收圖" })).toBeInTheDocument();
-    expect(screen.getByText("sales.pptx · Slide 3")).toBeInTheDocument();
+    expect(screen.getAllByText("sales.pptx · PPTX slide 3").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /download source file/i })).toBeInTheDocument();
   });
 });

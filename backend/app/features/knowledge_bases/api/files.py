@@ -4,6 +4,7 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
+    Form,
     HTTPException,
     Response,
     UploadFile,
@@ -16,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.shared.api.deps import get_current_user
 from app.core.config import get_settings
 from app.db.base import get_db
-from app.db.models import FileStatus, KnowledgeBase, KnowledgeFile, User
+from app.db.models import FileStatus, IngestionMode, KnowledgeBase, KnowledgeFile, User
 from app.db.models import KnowledgeImage
 from app.features.knowledge_bases.services import file_service
 from app.features.rag.services import qdrant_store, tagger
@@ -34,6 +35,7 @@ class FileOut(BaseModel):
     knowledge_base_id: int
     filename: str
     extension: str
+    ingestion_mode: str
     size_bytes: int
     status: str
     status_error: str | None = None
@@ -113,6 +115,7 @@ def _file_out(r: KnowledgeFile) -> FileOut:
         knowledge_base_id=r.knowledge_base_id,
         filename=r.filename,
         extension=r.extension,
+        ingestion_mode=r.ingestion_mode.value,
         size_bytes=r.size_bytes,
         status=r.status.value,
         status_error=r.status_error,
@@ -169,6 +172,7 @@ def _attachment_headers(filename: str, size_bytes: int) -> dict[str, str]:
 async def upload_file(
     kb_id: int,
     file: UploadFile = File(...),
+    ingestion_mode: IngestionMode = Form(IngestionMode.DOCUMENT),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> FileOut:
@@ -178,6 +182,11 @@ async def upload_file(
         extension = file_service.validate_extension(file.filename or "")
     except file_service.ValidationError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=e.code)
+
+    if ingestion_mode is IngestionMode.IMAGE and extension not in {"pdf", "pptx"}:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail="image_mode_requires_pdf_or_pptx"
+        )
 
     try:
         data, sha256, size = await file_service.stream_into_buffer(
@@ -196,6 +205,7 @@ async def upload_file(
         select(KnowledgeFile.id).where(
             KnowledgeFile.knowledge_base_id == kb.id,
             KnowledgeFile.filename == file.filename,
+            KnowledgeFile.ingestion_mode == ingestion_mode,
             KnowledgeFile.deleted_at.is_(None),
         )
     )
@@ -207,6 +217,7 @@ async def upload_file(
         owner_user_id=user.id,
         filename=file.filename,
         extension=extension,
+        ingestion_mode=ingestion_mode,
         size_bytes=size,
         content_sha256=sha256,
         storage_key="",  # placeholder — updated after we know the id

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import hashlib
+import mimetypes
 from dataclasses import dataclass
 
 from docx import Document as DocxDocument
@@ -82,6 +83,45 @@ def extract_pptx_images(data: bytes) -> list[ParsedImage]:
                 )
             )
     return out
+
+
+def extract_pdf_images(data: bytes) -> list[ParsedImage]:
+    """Extract embedded raster images, deduplicated within the PDF."""
+    reader = PdfReader(io.BytesIO(data))
+    out: list[ParsedImage] = []
+    seen: set[str] = set()
+    for page_number, page in enumerate(reader.pages, start=1):
+        page_text = page.extract_text() or ""
+        for image_index, image in enumerate(page.images, start=1):
+            blob = image.data
+            digest = hashlib.sha256(blob).hexdigest()
+            if digest in seen:
+                continue
+            seen.add(digest)
+            extension = image.name.rsplit(".", 1)[-1].lower() if "." in image.name else "bin"
+            content_type = mimetypes.guess_type(image.name)[0] or "application/octet-stream"
+            out.append(
+                ParsedImage(
+                    data=blob,
+                    extension=extension,
+                    content_type=content_type,
+                    content_sha256=digest,
+                    page_number=page_number,
+                    image_index=image_index,
+                    width_emu=None,
+                    height_emu=None,
+                    page_text=page_text,
+                )
+            )
+    return out
+
+
+def extract_images(extension: str, data: bytes) -> list[ParsedImage]:
+    if extension == "pptx":
+        return extract_pptx_images(data)
+    if extension == "pdf":
+        return extract_pdf_images(data)
+    raise ValueError(f"image extraction unsupported for: {extension}")
 
 
 def _parse_pdf(data: bytes) -> list[ParsedSegment]:

@@ -1,4 +1,4 @@
-"""Extract, name, persist, and index embedded PPTX pictures."""
+"""Extract, name, persist, and index embedded PDF/PPTX pictures."""
 
 from __future__ import annotations
 
@@ -99,16 +99,16 @@ async def cleanup_file_images(
         await session.commit()
 
 
-async def ingest_pptx_images(
+async def ingest_document_images(
     *, session: AsyncSession, file_row: KnowledgeFile, data: bytes
-) -> None:
+) -> int:
     from app.features.rag.services import ingestion
 
     await cleanup_file_images(session=session, file_id=file_row.id, commit=False)
-    images = document_parser.extract_pptx_images(data)
+    images = document_parser.extract_images(file_row.extension, data)
     if not images:
         await session.commit()
-        return
+        return 0
     await image_store.ensure_collection()
     storage = get_storage_client()
     for image in images:
@@ -166,3 +166,11 @@ async def ingest_pptx_images(
         )
         row.indexed = True
     await session.commit()
+    return len(images)
+
+
+async def ingest_pptx_images(
+    *, session: AsyncSession, file_row: KnowledgeFile, data: bytes
+) -> int:
+    """Backward-compatible alias for existing callers and tests."""
+    return await ingest_document_images(session=session, file_row=file_row, data=data)

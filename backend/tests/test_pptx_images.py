@@ -6,7 +6,8 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.util import Inches
 
-from app.features.rag.services import document_parser, image_ingestion
+from app.db.models import FileStatus, IngestionMode
+from app.features.rag.services import document_parser, image_ingestion, ingestion
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -59,6 +60,73 @@ def test_extract_pptx_images_only_keeps_pictures_and_deduplicates() -> None:
     assert images[0].image_index == 1
     assert images[0].page_text == "季度營收趨勢"
     assert images[0].data == PNG_1X1
+
+
+def test_extract_pdf_images_preserves_page_and_deduplicates(monkeypatch) -> None:
+    class FakeImage:
+        name = "figure.png"
+        data = PNG_1X1
+
+    class FakePage:
+        images = [FakeImage()]
+
+        def __init__(self, text: str) -> None:
+            self._text = text
+
+        def extract_text(self) -> str:
+            return self._text
+
+    class FakeReader:
+        def __init__(self, _stream) -> None:
+            self.pages = [FakePage("page one"), FakePage("page two")]
+
+    monkeypatch.setattr(document_parser, "PdfReader", FakeReader)
+
+    images = document_parser.extract_pdf_images(b"fake pdf")
+
+    assert len(images) == 1
+    assert images[0].data == PNG_1X1
+    assert images[0].extension == "png"
+    assert images[0].content_type == "image/png"
+    assert images[0].page_number == 1
+    assert images[0].image_index == 1
+    assert images[0].page_text == "page one"
+
+
+@pytest.mark.asyncio
+async def test_image_mode_skips_document_parser(monkeypatch) -> None:
+    class FakeSession:
+        commits = 0
+
+        async def commit(self) -> None:
+            self.commits += 1
+
+    row = type(
+        "FileRow",
+        (),
+        {
+            "ingestion_mode": IngestionMode.IMAGE,
+            "extension": "pdf",
+            "status": FileStatus.UPLOADED,
+            "status_error": None,
+        },
+    )()
+
+    async def fake_images(**_kwargs) -> int:
+        return 2
+
+    def fail_parse(*_args, **_kwargs):
+        raise AssertionError("document parser must not run in image mode")
+
+    monkeypatch.setattr(image_ingestion, "ingest_document_images", fake_images)
+    monkeypatch.setattr(document_parser, "parse", fail_parse)
+    session = FakeSession()
+
+    await ingestion.ingest_file(session=session, file_row=row, data=b"pdf")
+
+    assert row.status is FileStatus.INDEXED
+    assert row.status_error is None
+    assert session.commits == 1
 
 
 @pytest.mark.asyncio

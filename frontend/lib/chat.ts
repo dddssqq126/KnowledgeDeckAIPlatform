@@ -20,8 +20,11 @@ export type RelatedImage = {
   id: number;
   name: string;
   source_filename: string;
+  source_file_id: number;
+  source_extension: string;
   page_number: number;
   content_url: string;
+  source_download_url: string;
 };
 
 export type ChatSession = {

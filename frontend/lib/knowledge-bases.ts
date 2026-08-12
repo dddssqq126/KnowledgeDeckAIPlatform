@@ -11,6 +11,7 @@ export type FileStatus =
   | "embedding"
   | "indexed"
   | "failed";
+export type IngestionMode = "document" | "image" | "both";
 
 export type KnowledgeBase = {
   id: number;
@@ -32,6 +33,7 @@ export type KnowledgeFile = {
   knowledge_base_id: number;
   filename: string;
   extension: string;
+  ingestion_mode: IngestionMode;
   size_bytes: number;
   status: FileStatus;
   status_error: string | null;
@@ -121,9 +123,11 @@ export async function uploadFile(
   kbId: number,
   file: File,
   onProgress?: (percent: number) => void,
+  ingestionMode: Exclude<IngestionMode, "both"> = "document",
 ): Promise<KnowledgeFile> {
   const form = new FormData();
   form.append("file", file);
+  form.append("ingestion_mode", ingestionMode);
   const res = await api.post<KnowledgeFile>(
     `/knowledge-bases/${kbId}/files`,
     form,

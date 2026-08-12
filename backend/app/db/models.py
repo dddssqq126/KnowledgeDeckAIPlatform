@@ -38,6 +38,12 @@ class FileStatus(enum.Enum):
     FAILED = "failed"
 
 
+class IngestionMode(enum.Enum):
+    DOCUMENT = "document"
+    IMAGE = "image"
+    BOTH = "both"
+
+
 class KnowledgeBase(Base):
     __tablename__ = "knowledge_bases"
 
@@ -108,6 +114,16 @@ class KnowledgeFile(Base):
     )
     filename: Mapped[str] = mapped_column(Text, nullable=False)
     extension: Mapped[str] = mapped_column(Text, nullable=False)
+    ingestion_mode: Mapped[IngestionMode] = mapped_column(
+        SAEnum(
+            IngestionMode,
+            name="ingestion_mode",
+            create_type=False,
+            values_callable=lambda enum_cls: [m.value for m in enum_cls],
+        ),
+        nullable=False,
+        default=IngestionMode.DOCUMENT,
+    )
     size_bytes: Mapped[int] = mapped_column(ID_TYPE, nullable=False)
     content_sha256: Mapped[str] = mapped_column(Text, nullable=False)
     storage_key: Mapped[str] = mapped_column(Text, nullable=False)
@@ -144,6 +160,7 @@ class KnowledgeFile(Base):
             "uq_files_kb_filename_active",
             "knowledge_base_id",
             "filename",
+            "ingestion_mode",
             unique=True,
             postgresql_where=sa.text("deleted_at IS NULL"),
         ),

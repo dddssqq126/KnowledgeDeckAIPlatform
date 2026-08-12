@@ -1,7 +1,7 @@
 "use client";
 
 import { isAxiosError } from "axios";
-import { CheckCircle2, FolderUp, Upload, XCircle } from "lucide-react";
+import { CheckCircle2, FolderUp, ImagePlus, Upload, XCircle } from "lucide-react";
 import {
   useEffect,
   useRef,
@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import { uploadFile } from "../lib/knowledge-bases";
+import type { IngestionMode } from "../lib/knowledge-bases";
 
 const ACCEPTED = new Set([
   "txt",
@@ -25,6 +26,7 @@ const ACCEPTED = new Set([
   "bas",
 ]);
 const ACCEPT_ATTR = ".txt,.pdf,.cs,.md,.docx,.pptx,.py,.html,.css,.bas";
+const IMAGE_ACCEPT_ATTR = ".pdf,.pptx";
 
 const ERROR_FALLBACKS: Record<string, string> = {
   invalid_extension:
@@ -33,6 +35,7 @@ const ERROR_FALLBACKS: Record<string, string> = {
   file_too_large: "File exceeds the 50 MB limit",
   duplicate_filename: "A file with this name already exists",
   storage_error: "Storage failed",
+  image_mode_requires_pdf_or_pptx: "Image extraction only supports PDF and PPTX",
 };
 
 type RowStatus = "queued" | "uploading" | "done" | "error" | "skipped";
@@ -44,6 +47,7 @@ type Row = {
   status: RowStatus;
   progress: number;
   error: string | null;
+  mode: Exclude<IngestionMode, "both">;
 };
 
 type Props = {
@@ -108,24 +112,28 @@ async function filesFromDataTransfer(items: DataTransferItemList): Promise<File[
   return out;
 }
 
-function buildRows(files: File[]): { rows: Row[]; skippedCount: number } {
+function buildRows(
+  files: File[],
+  mode: Exclude<IngestionMode, "both">,
+): { rows: Row[]; skippedCount: number } {
   const rows: Row[] = [];
   let skippedCount = 0;
 
   for (const file of files) {
     const display =
       (file as any).__relativePath ?? (file as any).webkitRelativePath ?? file.name;
-    if (!ACCEPTED.has(ext(file.name))) {
+    if (!ACCEPTED.has(ext(file.name)) || (mode === "image" && !["pdf", "pptx"].includes(ext(file.name)))) {
       skippedCount++;
       continue;
     }
     rows.push({
-      key: `${display}:${file.size}:${file.lastModified}`,
+      key: `${mode}:${display}:${file.size}:${file.lastModified}`,
       file,
       displayName: display,
       status: "queued",
       progress: 0,
       error: null,
+      mode,
     });
   }
 
@@ -138,6 +146,7 @@ export function DropUpload({ kbId, onAllUploaded }: Props) {
   const [skipped, setSkipped] = useState(0);
   const [running, setRunning] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -147,8 +156,8 @@ export function DropUpload({ kbId, onAllUploaded }: Props) {
     }
   }, []);
 
-  function addFiles(files: File[]) {
-    const { rows: newRows, skippedCount } = buildRows(files);
+  function addFiles(files: File[], mode: Exclude<IngestionMode, "both"> = "document") {
+    const { rows: newRows, skippedCount } = buildRows(files, mode);
     setRows((current) => {
       const seen = new Set(current.map((row) => row.key));
       return [...current, ...newRows.filter((row) => !seen.has(row.key))];
@@ -156,9 +165,9 @@ export function DropUpload({ kbId, onAllUploaded }: Props) {
     if (skippedCount > 0) setSkipped((count) => count + skippedCount);
   }
 
-  function onPickFiles(e: ChangeEvent<HTMLInputElement>) {
+  function onPickFiles(e: ChangeEvent<HTMLInputElement>, mode: Exclude<IngestionMode, "both"> = "document") {
     if (!e.target.files) return;
-    addFiles(Array.from(e.target.files));
+    addFiles(Array.from(e.target.files), mode);
     e.target.value = "";
   }
 
@@ -194,7 +203,7 @@ export function DropUpload({ kbId, onAllUploaded }: Props) {
               index === i ? { ...item, progress: percent } : item,
             ),
           );
-        });
+        }, row.mode);
         setRows((current) =>
           current.map((item, index) =>
             index === i ? { ...item, status: "done", progress: 100 } : item,
@@ -238,11 +247,11 @@ export function DropUpload({ kbId, onAllUploaded }: Props) {
         }`}
       >
         <div className="text-sm text-muted-foreground">
-          Drop files or folders here
+          Drop documents or folders here
         </div>
         <div className="mt-1 text-xs text-muted-foreground">
-          TXT / PDF / CS / BAS / PPTX up to 50 MB each; folders are walked
-          recursively, other formats are skipped
+          Documents support the existing formats; Extract images accepts PDF / PPTX.
+          Files are limited to 50 MB each.
         </div>
         <div className="mt-3 flex items-center justify-center gap-2">
           <button
@@ -251,6 +260,13 @@ export function DropUpload({ kbId, onAllUploaded }: Props) {
             className="flex items-center gap-1 rounded-md border border-border bg-white px-3 py-1.5 text-xs hover:bg-muted"
           >
             <Upload className="h-3.5 w-3.5" /> Choose files
+          </button>
+          <button
+            type="button"
+            onClick={() => imageInputRef.current?.click()}
+            className="flex items-center gap-1 rounded-md border border-border bg-white px-3 py-1.5 text-xs hover:bg-muted"
+          >
+            <ImagePlus className="h-3.5 w-3.5" /> Extract images
           </button>
           <button
             type="button"
@@ -266,6 +282,14 @@ export function DropUpload({ kbId, onAllUploaded }: Props) {
           multiple
           accept={ACCEPT_ATTR}
           onChange={onPickFiles}
+          className="hidden"
+        />
+        <input
+          ref={imageInputRef}
+          type="file"
+          multiple
+          accept={IMAGE_ACCEPT_ATTR}
+          onChange={(event) => onPickFiles(event, "image")}
           className="hidden"
         />
         <input
@@ -320,6 +344,9 @@ export function DropUpload({ kbId, onAllUploaded }: Props) {
                 <div className="min-w-0 flex-1">
                   <div className="truncate" title={row.displayName}>
                     {row.displayName}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {row.mode === "image" ? "Image extraction" : "Document"}
                   </div>
                   {row.status === "uploading" ? (
                     <div className="mt-1 h-1 w-full rounded-full bg-muted">

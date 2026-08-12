@@ -17,7 +17,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.db.models import FileStatus, KnowledgeFile
+from app.db.models import FileStatus, IngestionMode, KnowledgeFile
 from app.features.rag.services import (
     document_parser,
     qdrant_store,
@@ -144,6 +144,21 @@ async def ingest_file(
     even if ingestion fails — the user can retry by re-uploading).
     """
     try:
+        if file_row.ingestion_mode is IngestionMode.IMAGE:
+            from app.features.rag.services import image_ingestion
+
+            count = await image_ingestion.ingest_document_images(
+                session=session, file_row=file_row, data=data
+            )
+            if not count:
+                file_row.status = FileStatus.FAILED
+                file_row.status_error = "no extractable images"
+            else:
+                file_row.status = FileStatus.INDEXED
+                file_row.status_error = None
+            await session.commit()
+            return
+
         segments = document_parser.parse(file_row.extension, data)
         if not segments:
             file_row.status = FileStatus.FAILED
@@ -190,10 +205,10 @@ async def ingest_file(
             project_id=file_row.project_id,
             model_codes=file_row.model_codes or [],
         )
-        if file_row.extension == "pptx":
+        if file_row.ingestion_mode is IngestionMode.BOTH and file_row.extension in {"pdf", "pptx"}:
             from app.features.rag.services import image_ingestion
 
-            await image_ingestion.ingest_pptx_images(
+            await image_ingestion.ingest_document_images(
                 session=session, file_row=file_row, data=data
             )
 
@@ -204,7 +219,7 @@ async def ingest_file(
     except Exception as exc:  # pragma: no cover - prototype error path
         logger.exception("ingest_failed file_id=%s", file_row.id)
         await session.rollback()
-        if file_row.extension == "pptx":
+        if file_row.ingestion_mode in {IngestionMode.IMAGE, IngestionMode.BOTH}:
             try:
                 from app.features.rag.services import image_ingestion
 
