@@ -31,10 +31,20 @@ describe("DropUpload accepted file types", () => {
     expect(screen.getByText("1 file skipped (unsupported format).")).toBeInTheDocument();
   });
 
-  it("provides a PDF/PPTX-only image extraction input", () => {
+  it("provides separate text and image upload buttons", () => {
     const view = renderDropUpload();
     const inputs = view.container.querySelectorAll('input[type="file"]');
+    expect(inputs).toHaveLength(2);
+    expect(
+      screen.getByRole("button", { name: /upload text/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /upload images/i }),
+    ).toBeInTheDocument();
+    expect(inputs[0]).toHaveAttribute(
+      "accept",
+      ".txt,.pdf,.cs,.md,.docx,.pptx,.py,.html,.css,.bas",
+    );
     expect(inputs[1]).toHaveAttribute("accept", ".pdf,.pptx");
-    expect(screen.getByRole("button", { name: /extract images/i })).toBeInTheDocument();
   });
 });

@@ -4,7 +4,6 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
-    Form,
     HTTPException,
     Response,
     UploadFile,
@@ -35,7 +34,6 @@ class FileOut(BaseModel):
     knowledge_base_id: int
     filename: str
     extension: str
-    ingestion_mode: str
     size_bytes: int
     status: str
     status_error: str | None = None
@@ -115,7 +113,6 @@ def _file_out(r: KnowledgeFile) -> FileOut:
         knowledge_base_id=r.knowledge_base_id,
         filename=r.filename,
         extension=r.extension,
-        ingestion_mode=r.ingestion_mode.value,
         size_bytes=r.size_bytes,
         status=r.status.value,
         status_error=r.status_error,
@@ -169,12 +166,46 @@ def _attachment_headers(filename: str, size_bytes: int) -> dict[str, str]:
 @router.post(
     "/{kb_id}/files", response_model=FileOut, status_code=status.HTTP_201_CREATED
 )
-async def upload_file(
+async def upload_text_file(
     kb_id: int,
     file: UploadFile = File(...),
-    ingestion_mode: IngestionMode = Form(IngestionMode.DOCUMENT),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
+) -> FileOut:
+    return await _upload_file(
+        kb_id=kb_id,
+        file=file,
+        ingestion_mode=IngestionMode.DOCUMENT,
+        user=user,
+        session=session,
+    )
+
+
+@router.post(
+    "/{kb_id}/images", response_model=FileOut, status_code=status.HTTP_201_CREATED
+)
+async def upload_image_file(
+    kb_id: int,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> FileOut:
+    return await _upload_file(
+        kb_id=kb_id,
+        file=file,
+        ingestion_mode=IngestionMode.IMAGE,
+        user=user,
+        session=session,
+    )
+
+
+async def _upload_file(
+    *,
+    kb_id: int,
+    file: UploadFile,
+    ingestion_mode: IngestionMode,
+    user: User,
+    session: AsyncSession,
 ) -> FileOut:
     kb = await _load_owned_kb(session, owner_user_id=user.id, kb_id=kb_id)
 

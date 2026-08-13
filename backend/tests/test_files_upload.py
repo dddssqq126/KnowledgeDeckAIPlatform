@@ -55,6 +55,33 @@ async def test_upload_pdf_happy_path(http_client, alice: User) -> None:
     assert body["extension"] == "pdf"
     assert body["size_bytes"] == len(PDF_BYTES)
     assert body["status"] == "uploaded"
+    assert "ingestion_mode" not in body
+
+
+@pytest.mark.asyncio
+async def test_upload_image_uses_dedicated_endpoint_without_mode(
+    http_client, alice: User
+) -> None:
+    kb_id = await make_kb(http_client, alice)
+    res = await http_client.post(
+        f"/knowledge-bases/{kb_id}/images",
+        files={"file": ("deck.pdf", io.BytesIO(PDF_BYTES), "application/pdf")},
+        headers=auth(alice),
+    )
+    assert res.status_code == 201
+    assert "ingestion_mode" not in res.json()
+
+
+@pytest.mark.asyncio
+async def test_upload_image_rejects_text_files(http_client, alice: User) -> None:
+    kb_id = await make_kb(http_client, alice)
+    res = await http_client.post(
+        f"/knowledge-bases/{kb_id}/images",
+        files={"file": ("note.txt", io.BytesIO(TXT_BYTES), "text/plain")},
+        headers=auth(alice),
+    )
+    assert res.status_code == 400
+    assert res.json() == {"detail": "image_mode_requires_pdf_or_pptx"}
 
 
 @pytest.mark.asyncio

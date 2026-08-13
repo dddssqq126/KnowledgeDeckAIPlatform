@@ -11,7 +11,8 @@ import {
   downloadKnowledgeFile,
   listFiles,
   listKnowledgeBases,
-  uploadFile,
+  uploadImageFile,
+  uploadTextFile,
   updateFileTags,
 } from "./knowledge-bases";
 
@@ -72,11 +73,11 @@ describe("knowledge-bases API client", () => {
     expect(out).toEqual([]);
   });
 
-  it("uploadFile sends multipart with file field", async () => {
+  it("uploadTextFile sends only the file field to the text endpoint", async () => {
     mock.onPost("/knowledge-bases/3/files").reply((config) => {
       expect(config.data).toBeInstanceOf(FormData);
       expect(config.data.get("file")).toBeInstanceOf(File);
-      expect(config.data.get("ingestion_mode")).toBe("document");
+      expect([...config.data.keys()]).toEqual(["file"]);
       expect(config.timeout).toBe(LONG_RUNNING_REQUEST_TIMEOUT_MS);
       return [
         201,
@@ -93,11 +94,23 @@ describe("knowledge-bases API client", () => {
       ];
     });
     const f = new File(["x"], "x.txt", { type: "text/plain" });
-    const out = await uploadFile(3, f);
+    const out = await uploadTextFile(3, f);
     expect(out.id).toBe(9);
   });
 
-  it("uploadFile invokes onProgress with percentages", async () => {
+  it("uploadImageFile sends only the file field to the image endpoint", async () => {
+    mock.onPost("/knowledge-bases/3/images").reply((config) => {
+      expect(config.data).toBeInstanceOf(FormData);
+      expect(config.data.get("file")).toBeInstanceOf(File);
+      expect([...config.data.keys()]).toEqual(["file"]);
+      return [201, { id: 10 }];
+    });
+
+    const out = await uploadImageFile(3, new File(["pdf"], "deck.pdf"));
+    expect(out.id).toBe(10);
+  });
+
+  it("uploadTextFile invokes onProgress with percentages", async () => {
     let lastPct = -1;
     mock.onPost("/knowledge-bases/3/files").reply((config) => {
       // Simulate axios progress event firing.
@@ -123,7 +136,7 @@ describe("knowledge-bases API client", () => {
         },
       ];
     });
-    await uploadFile(3, new File(["x"], "x.txt"), (pct) => {
+    await uploadTextFile(3, new File(["x"], "x.txt"), (pct) => {
       lastPct = pct;
     });
     expect(lastPct).toBe(100);
@@ -184,7 +197,7 @@ describe("knowledge-bases API client", () => {
     expect(downloadBlob).toHaveBeenCalledWith(blob, "server-name.txt");
   });
 
-  it("uploadFile does not invoke onProgress when e.total is 0", async () => {
+  it("uploadTextFile does not invoke onProgress when e.total is 0", async () => {
     let called = false;
     mock.onPost("/knowledge-bases/3/files").reply((config) => {
       config.onUploadProgress?.({
@@ -205,7 +218,7 @@ describe("knowledge-bases API client", () => {
         },
       ];
     });
-    await uploadFile(3, new File(["x"], "x.txt"), () => {
+    await uploadTextFile(3, new File(["x"], "x.txt"), () => {
       called = true;
     });
     expect(called).toBe(false);
