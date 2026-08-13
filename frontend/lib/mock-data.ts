@@ -221,7 +221,6 @@ function file(
     knowledge_base_id: kbId,
     filename,
     extension,
-    ingestion_mode: "document",
     size_bytes: size,
     status: "indexed",
     status_error: null,

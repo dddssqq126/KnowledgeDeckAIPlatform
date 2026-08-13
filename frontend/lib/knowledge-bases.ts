@@ -11,8 +11,6 @@ export type FileStatus =
   | "embedding"
   | "indexed"
   | "failed";
-export type IngestionMode = "document" | "image" | "both";
-
 export type KnowledgeBase = {
   id: number;
   name: string;
@@ -33,7 +31,6 @@ export type KnowledgeFile = {
   knowledge_base_id: number;
   filename: string;
   extension: string;
-  ingestion_mode: IngestionMode;
   size_bytes: number;
   status: FileStatus;
   status_error: string | null;
@@ -119,27 +116,47 @@ export async function listFiles(kbId: number): Promise<KnowledgeFile[]> {
   return res.data;
 }
 
-export async function uploadFile(
-  kbId: number,
+type UploadProgress = (percent: number) => void;
+
+async function uploadKnowledgeFile(
+  endpoint: string,
   file: File,
-  onProgress?: (percent: number) => void,
-  ingestionMode: Exclude<IngestionMode, "both"> = "document",
+  onProgress?: UploadProgress,
 ): Promise<KnowledgeFile> {
   const form = new FormData();
   form.append("file", file);
-  form.append("ingestion_mode", ingestionMode);
-  const res = await api.post<KnowledgeFile>(
-    `/knowledge-bases/${kbId}/files`,
-    form,
-    {
-      timeout: LONG_RUNNING_REQUEST_TIMEOUT_MS,
-      onUploadProgress: (e) => {
-        if (!onProgress || !e.total) return;
-        onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100)));
-      },
+  const res = await api.post<KnowledgeFile>(endpoint, form, {
+    timeout: LONG_RUNNING_REQUEST_TIMEOUT_MS,
+    onUploadProgress: (e) => {
+      if (!onProgress || !e.total) return;
+      onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100)));
     },
-  );
+  });
   return res.data;
+}
+
+export function uploadTextFile(
+  kbId: number,
+  file: File,
+  onProgress?: UploadProgress,
+): Promise<KnowledgeFile> {
+  return uploadKnowledgeFile(
+    `/knowledge-bases/${kbId}/files`,
+    file,
+    onProgress,
+  );
+}
+
+export function uploadImageFile(
+  kbId: number,
+  file: File,
+  onProgress?: UploadProgress,
+): Promise<KnowledgeFile> {
+  return uploadKnowledgeFile(
+    `/knowledge-bases/${kbId}/images`,
+    file,
+    onProgress,
+  );
 }
 
 export async function deleteFile(kbId: number, fileId: number): Promise<void> {

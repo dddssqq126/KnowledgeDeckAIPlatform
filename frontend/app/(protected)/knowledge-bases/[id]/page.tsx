@@ -303,11 +303,6 @@ export default function KnowledgeBaseDetailPage() {
                     <div className="truncate text-sm">{f.filename}</div>
                     <div className="text-xs text-muted-foreground">
                       {f.extension.toUpperCase()} · {humanSize(f.size_bytes)} ·{" "}
-                      {f.ingestion_mode === "image"
-                        ? "Image extraction"
-                        : f.ingestion_mode === "both"
-                          ? "Document + images"
-                          : "Document"}{" "}·{" "}
                       <StatusBadge status={f.status} error={f.status_error} /> ·
                       {" "}
                       Uploaded {formatTimestamp(f.created_at)}

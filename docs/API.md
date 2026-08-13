@@ -165,7 +165,6 @@ List files in a KB.
     "id": 12,
     "filename": "react_hooks.txt",
     "extension": "txt",
-    "ingestion_mode": "document",
     "size_bytes": 2406,
     "content_sha256": "a1b2...",
     "status": "indexed",
@@ -179,23 +178,25 @@ List files in a KB.
 
 ### POST /knowledge-bases/{kb_id}/files
 
-Upload a file and select document or image ingestion. Processing is synchronous and returns the final file row with terminal status.
+Upload a document for text parsing and document RAG indexing. Processing is
+synchronous and returns the final file row with terminal status.
 
-`ingestion_mode=document` (the default) parses text and writes document RAG
-chunks. `ingestion_mode=image` accepts only PDF/PPTX, extracts embedded raster
-pictures, stores them separately, and indexes them in image RAG. Existing rows
-migrated from older releases use `both`. Shapes, vector graphics, charts,
-SmartArt, and text boxes are not extracted as images.
+**Request**: `multipart/form-data` with the `file` field. Extensions: `txt`,
+`md`, `pdf`, `cs`, `py`, `html`, `css`, `docx`, `pptx`, `bas`. 50 MB cap.
 
-**Request**: `multipart/form-data` with fields `file` and optional
-`ingestion_mode` (`document` or `image`). Document extensions: `txt`, `md`,
-`pdf`, `cs`, `py`, `html`, `css`, `docx`, `pptx`, `bas`. Image extensions:
-`pdf`, `pptx`. 50 MB cap.
+### POST /knowledge-bases/{kb_id}/images
+
+Upload a PDF or PPTX for embedded raster image extraction and image RAG
+indexing. Shapes, vector graphics, charts, SmartArt, and text boxes are not
+extracted as images.
+
+**Request**: `multipart/form-data` with the `file` field. Extensions: `pdf`,
+`pptx`. 50 MB cap.
 
 **Response 201**: same shape as the list entry above. `status` is `indexed` on success or `failed` on any pipeline error (with `status_error` populated).
 
 **Errors**:
-- `400 image_mode_requires_pdf_or_pptx` — image mode received another format
+- `400 image_mode_requires_pdf_or_pptx` — the image endpoint received another format
 - `400 invalid_extension` — extension not in allow-list
 - `400 invalid_content` — magic-byte / UTF-8 check failed
 - `409 duplicate_filename` — KB already has a non-deleted file with this name
@@ -204,10 +205,9 @@ SmartArt, and text boxes are not extracted as images.
 
 **Example**:
 ```bash
-curl -X POST "http://localhost:8080/knowledge-bases/1/files" \
+curl -X POST "http://localhost:8080/knowledge-bases/1/images" \
   -H "Authorization: Bearer $TOKEN" \
-  -F "file=@./deck.pdf" \
-  -F "ingestion_mode=image"
+  -F "file=@./deck.pdf"
 ```
 
 ### PATCH /knowledge-bases/{kb_id}/files/{file_id}/tags
